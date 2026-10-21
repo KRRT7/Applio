@@ -336,9 +336,7 @@ def run_tts_script(
         err_msg = result.stderr.strip()
         if "No module named" in err_msg:
             pkg = err_msg.split("No module named")[-1].strip().strip("'\"")
-            raise RuntimeError(
-                f"Missing Python package '{pkg}'. Please run: uv sync"
-            )
+            raise RuntimeError(f"Missing Python package '{pkg}'. Please run: uv sync")
         raise RuntimeError(err_msg or f"TTS failed with code {result.returncode}")
 
     if output_rvc_path and pth_path and os.path.exists(pth_path):
