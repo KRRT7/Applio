@@ -8,14 +8,15 @@ aiohttp==3.14.5 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pla
     # via edge-tts
 aiosignal==1.4.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via aiohttp
-annotated-doc==0.0.5 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+annotated-doc==0.0.6 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   fastapi
     #   typer
 annotated-types==0.8.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via pydantic
-anyio==4.15.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+anyio==4.16.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
+    #   fastapi
     #   gradio
     #   httpx
     #   starlette
@@ -25,9 +26,9 @@ audioread==3.1.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pl
     # via librosa
 beautifulsoup4==4.15.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via applio
-brotli==1.2.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+brotli==1.2.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
-certifi==2026.10.19 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+certifi==2026.10.23 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   edge-tts
     #   httpcore
@@ -59,7 +60,7 @@ contourpy==1.4.0 ; (python_full_version >= '3.12' and sys_platform == 'darwin') 
     # via matplotlib
 cuda-bindings==12.9.10 ; sys_platform == 'linux'
     # via torch
-cuda-pathfinder==1.8.3 ; sys_platform == 'linux'
+cuda-pathfinder==1.8.6 ; sys_platform == 'linux'
     # via cuda-bindings
 cuda-toolkit==12.8.1 ; sys_platform == 'linux'
     # via torch
@@ -78,11 +79,11 @@ einops==0.8.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platf
     #   torchfcpe
 faiss-cpu==1.14.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via applio
-fastapi==0.159.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+fastapi==0.162.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   applio
     #   gradio
-filelock==4.2.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+filelock==4.2.10 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   huggingface-hub
     #   torch
@@ -90,7 +91,7 @@ flatbuffers==25.12.19 ; sys_platform == 'darwin' or sys_platform == 'linux' or s
     # via
     #   onnxruntime
     #   onnxruntime-gpu
-fonttools==4.67.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+fonttools==4.68.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via matplotlib
 frozenlist==1.8.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
@@ -108,7 +109,7 @@ gradio-client==2.5.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sy
     #   hf-gradio
 groovy==0.1.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
-grpcio==1.84.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+grpcio==1.85.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via tensorboard
 h11==0.16.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
@@ -116,7 +117,7 @@ h11==0.16.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platfor
     #   uvicorn
 hf-gradio==0.4.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
-hf-xet==1.7.0 ; (platform_machine == 'AMD64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin') or (platform_machine == 'amd64' and sys_platform == 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'amd64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'aarch64' and sys_platform == 'win32') or (platform_machine == 'amd64' and sys_platform == 'win32') or (platform_machine == 'arm64' and sys_platform == 'win32') or (platform_machine == 'x86_64' and sys_platform == 'win32')
+hf-xet==1.8.0 ; (platform_machine == 'AMD64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'darwin') or (platform_machine == 'amd64' and sys_platform == 'darwin') or (platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'amd64' and sys_platform == 'linux') or (platform_machine == 'arm64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'aarch64' and sys_platform == 'win32') or (platform_machine == 'amd64' and sys_platform == 'win32') or (platform_machine == 'arm64' and sys_platform == 'win32') or (platform_machine == 'x86_64' and sys_platform == 'win32')
     # via huggingface-hub
 httpcore==1.0.9 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via httpx
@@ -162,9 +163,9 @@ llvmlite==0.50.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pl
     # via numba
 local-attention==1.11.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via torchfcpe
-markdown==3.11.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+markdown==3.11.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via tensorboard
-markdown-it-py==4.2.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+markdown-it-py==4.3.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via rich
 markupsafe==3.0.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
@@ -181,19 +182,19 @@ ml-dtypes==0.6.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pl
     # via onnx
 mpmath==1.3.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via sympy
-msgpack==1.2.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+msgpack==1.2.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via librosa
-multidict==7.1.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+multidict==7.2.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   aiohttp
     #   yarl
-narwhals==2.27.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+narwhals==2.28.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via scikit-learn
 networkx==3.6.1 ; (python_full_version < '3.12' and sys_platform == 'darwin') or (python_full_version < '3.12' and sys_platform == 'linux') or (python_full_version < '3.12' and sys_platform == 'win32')
     # via torch
 networkx==3.7 ; (python_full_version >= '3.12' and sys_platform == 'darwin') or (python_full_version >= '3.12' and sys_platform == 'linux') or (python_full_version >= '3.12' and sys_platform == 'win32')
     # via torch
-numba==0.68.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+numba==0.68.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   librosa
     #   resampy
@@ -275,11 +276,11 @@ nvidia-nvtx-cu12==12.8.90 ; sys_platform == 'linux'
     # via cuda-toolkit
 onnx==1.23.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via applio
-onnxruntime==1.31.0 ; sys_platform == 'darwin' or sys_platform == 'linux'
+onnxruntime==1.31.1 ; sys_platform == 'darwin' or sys_platform == 'linux'
     # via applio
 onnxruntime-gpu==1.22.0 ; sys_platform == 'win32'
     # via applio
-opentelemetry-api==1.45.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+opentelemetry-api==1.45.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via fastapi
 orjson==3.13.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
@@ -296,14 +297,14 @@ packaging==26.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pla
     #   pooch
     #   tensorboard
     #   transformers
-pandas==3.0.6 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+pandas==3.1.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
 pillow==12.3.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   gradio
     #   matplotlib
     #   tensorboard
-platformdirs==4.13.5 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+platformdirs==4.14.5 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via pooch
 pooch==1.9.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via librosa
@@ -319,13 +320,14 @@ protobuf==7.36.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pl
     #   tensorboard
 psutil==7.2.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via applio
-pycparser==3.11 ; (implementation_name != 'PyPy' and sys_platform == 'darwin') or (implementation_name != 'PyPy' and sys_platform == 'linux') or (implementation_name != 'PyPy' and sys_platform == 'win32')
+pycparser==3.12 ; (implementation_name != 'PyPy' and sys_platform == 'darwin') or (implementation_name != 'PyPy' and sys_platform == 'linux') or (implementation_name != 'PyPy' and sys_platform == 'win32')
     # via cffi
-pydantic==2.14.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+pydantic==2.14.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   fastapi
     #   gradio
-pydantic-core==2.50.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+    #   typer
+pydantic-core==2.50.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via pydantic
 pydub==0.25.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
@@ -336,20 +338,20 @@ pyparsing==3.3.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pl
 pypresence==4.6.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
 pyreadline3==3.5.6 ; sys_platform == 'win32'
     # via humanfriendly
-python-dateutil==2.9.0.post0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+python-dateutil==4.0.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   matplotlib
     #   pandas
-python-multipart==0.0.32 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+python-multipart==0.0.33 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
-pytz==2026.5 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+pytz==2026.6 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via gradio
 pyyaml==6.0.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   gradio
     #   huggingface-hub
     #   transformers
-regex==2026.9.29 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+regex==2026.11.9 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via transformers
 requests==2.34.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
@@ -385,8 +387,6 @@ setuptools==81.0.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_
     #   torch
 shellingham==1.5.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via typer
-six==1.17.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
-    # via python-dateutil
 sounddevice==0.5.5 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via applio
 soundfile==0.14.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
@@ -395,13 +395,13 @@ soundfile==0.14.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_p
     #   librosa
 soupsieve==2.10 ; (python_full_version < '3.11.5' and sys_platform == 'darwin') or (python_full_version < '3.11.5' and sys_platform == 'linux') or (python_full_version < '3.11.5' and sys_platform == 'win32')
     # via beautifulsoup4
-soupsieve==3.0.3 ; (python_full_version >= '3.11.5' and sys_platform == 'darwin') or (python_full_version >= '3.11.5' and sys_platform == 'linux') or (python_full_version >= '3.11.5' and sys_platform == 'win32')
+soupsieve==4.1 ; (python_full_version >= '3.11.5' and sys_platform == 'darwin') or (python_full_version >= '3.11.5' and sys_platform == 'linux') or (python_full_version >= '3.11.5' and sys_platform == 'win32')
     # via beautifulsoup4
 soxr==1.1.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   applio
     #   librosa
-starlette==1.9.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+starlette==1.10.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   fastapi
     #   gradio
@@ -417,7 +417,7 @@ tensorboard==2.21.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys
     # via applio
 tensorboard-data-server==0.7.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via tensorboard
-threadpoolctl==3.7.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+threadpoolctl==3.8.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via scikit-learn
 tokenizers==0.22.2 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via transformers
@@ -439,7 +439,7 @@ torch==2.11.0+cu128 ; sys_platform == 'linux' or sys_platform == 'win32'
     #   torch-einops-utils
     #   torchcrepe
     #   torchfcpe
-torch-einops-utils==0.1.37 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+torch-einops-utils==0.2.6 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via hyper-connections
 torchaudio==2.11.0 ; sys_platform == 'darwin'
     # via
@@ -465,7 +465,7 @@ transformers==5.13.1 ; sys_platform == 'darwin' or sys_platform == 'linux' or sy
     # via applio
 triton==3.6.0 ; sys_platform == 'linux'
     # via torch
-typer==0.27.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+typer==0.29.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   gradio
     #   hf-gradio
@@ -492,12 +492,14 @@ typing-extensions==4.16.0 ; sys_platform == 'darwin' or sys_platform == 'linux' 
     #   starlette
     #   torch
     #   typing-inspection
-typing-inspection==0.4.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+typing-inspection==0.4.5 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via
     #   fastapi
     #   pydantic
-tzdata==2026.5 ; sys_platform == 'win32'
-    # via pandas
+tzdata==2026.6 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+    # via
+    #   pandas
+    #   python-dateutil
 urllib3==2.8.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via requests
 uvicorn==0.54.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
@@ -506,7 +508,7 @@ uvicorn==0.54.0 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_pla
     #   gradio
 webrtcvad-wheels==2.0.14 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via applio
-websockets==17.3 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
+websockets==17.4 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via applio
 werkzeug==3.1.9 ; sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'
     # via tensorboard
