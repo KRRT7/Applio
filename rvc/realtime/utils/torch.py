@@ -265,20 +265,35 @@ class IndexWrapper:
                 try:
                     # Compute ||a||^2 for query vectors
                     q_norm = (query**2).sum(dim=-1, keepdim=True)
-                    # Compute squared L2 distances
-                    distances = (
-                        torch.addmm(
-                            self.b_norms, query, self.big_tensor.T, alpha=-2.0, beta=1.0
-                        )
-                        + q_norm
+                    # ||b||^2 - 2ab. Adding ||a||^2 (a per-row constant) and the
+                    # clamp are monotone non-decreasing under float rounding, so
+                    # they are applied to the k selected entries only; the result
+                    # is a valid top-k of the full distances (only the order of
+                    # exactly tied distances, which topk leaves unspecified, can
+                    # differ).
+                    partial = torch.addmm(
+                        self.b_norms, query, self.big_tensor.T, alpha=-2.0, beta=1.0
                     )
-                    # Prevent negative values caused by floating-point precision
-                    distances = distances.clamp(min=self.clamp)
 
-                    # Retrieve smallest distances
-                    scores, indices = torch.topk(-distances, k=k, dim=-1)
+                    # topk over the database row is much slower on MPS than a
+                    # small host copy. Other devices keep it on-device (CUDA
+                    # graph capture must not synchronize with the host).
+                    if partial.device.type == "mps":
+                        values, indices = torch.topk(
+                            partial.cpu(), k=k, dim=-1, largest=False
+                        )
+                        values = values.to(partial.device)
+                        indices = indices.to(partial.device)
+                    else:
+                        values, indices = torch.topk(
+                            partial, k=k, dim=-1, largest=False
+                        )
 
-                    return -scores, indices
+                    # Squared L2 distances; the clamp prevents negative values
+                    # caused by floating-point precision.
+                    scores = (values + q_norm).clamp(min=self.clamp)
+
+                    return scores, indices
                 except (torch.OutOfMemoryError, RuntimeError):
                     print(
                         "[Warning]: An error occurred when using Faiss with the GPU. Fallback to the CPU."
