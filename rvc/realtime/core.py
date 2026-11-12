@@ -21,6 +21,44 @@ SAMPLE_RATE = 16000
 AUDIO_SAMPLE_RATE = 48000
 
 
+# Per-block constants of the phase vocoder, derived from the (immutable) fade
+# windows. The source tensors are kept referenced so their identity cannot be
+# reused by a newly allocated window after generate_strength() rebinds them.
+_PHASE_VOCODER_CACHE = {}
+
+
+def _phase_vocoder_constants(a, fade_out, fade_in):
+    n = a.shape[0]
+    cache = _PHASE_VOCODER_CACHE
+    source = cache.get("source")
+    if (
+        source is not None
+        and source[0] is fade_out
+        and source[1] is fade_in
+        and cache["key"] == (n, a.device, a.dtype)
+    ):
+        return cache
+
+    out = fade_out.to(a.device)
+    inn = fade_in.to(a.device)
+    constants = {
+        # Analysis window: the geometric mean of the fade curves
+        "window": (out * inn).sqrt(),
+        "fade_out_sq": out**2,
+        "fade_in_sq": inn**2,
+        # Base frequency grid for each bin
+        "grid": 2 * torch.pi * torch.arange(n // 2 + 1, device=a.device, dtype=a.dtype),
+        # Normalized time axis
+        "time": torch.arange(n, device=a.device, dtype=a.dtype).unsqueeze(-1) / n,
+    }
+    # Tensors created while a CUDA graph is being captured hold no values until
+    # replay, so they must not outlive the capture.
+    if not (a.is_cuda and torch.cuda.is_current_stream_capturing()):
+        cache.clear()
+        cache.update(constants, source=(fade_out, fade_in), key=(n, a.device, a.dtype))
+    return constants
+
+
 def phase_vocoder(a, b, fade_out, fade_in):
     """
     Performs a phase vocoder crossfade between two audio segments.
@@ -39,12 +77,11 @@ def phase_vocoder(a, b, fade_out, fade_in):
         torch.Tensor: The crossfaded audio segment.
     """
     if a.device.type == "mps":
-        return phase_vocoder(a.cpu(), b.cpu(), fade_out.cpu(), fade_in.cpu()).to(
-            a.device
-        )
+        # Constants are cached on the CPU, so only the two segments move.
+        return phase_vocoder(a.cpu(), b.cpu(), fade_out, fade_in).to(a.device)
 
-    # Compute the analysis window as the geometric mean of fade curves
-    window = (fade_out * fade_in).sqrt()
+    constants = _phase_vocoder_constants(a, fade_out, fade_in)
+    window = constants["window"]
     # Transform both windowed segments to the frequency domain (Real FFT)
     fa = torch.fft.rfft(a * window)
     fb = torch.fft.rfft(b * window)
@@ -65,16 +102,13 @@ def phase_vocoder(a, b, fade_out, fade_in):
     # Reconstruct the signal using a combination of time-domain crossfade
     # and phase-aligned sinusoidal synthesis (Phase Vocoder)
     return (
-        a * (fade_out**2)
-        + b * (fade_in**2)
+        a * constants["fade_out_sq"]
+        + b * constants["fade_in_sq"]
         + (
             absab
             * (
                 (
-                    # Base frequency grid for each bin
-                    2
-                    * torch.pi
-                    * torch.arange(n // 2 + 1, device=a.device, dtype=a.dtype)
+                    constants["grid"]
                     +
                     # Phase unwrapping (wrapping delta phase to the [-pi, pi] range)
                     (
@@ -82,7 +116,7 @@ def phase_vocoder(a, b, fade_out, fade_in):
                         - 2 * torch.pi * (deltaphase / 2 / torch.pi + 0.5).floor()
                     )
                 )
-                * (torch.arange(n, device=a.device, dtype=a.dtype).unsqueeze(-1) / n)
+                * constants["time"]
                 + phia  # Continuous phase evolution over time
             ).cos()
         ).sum(-1)
@@ -503,6 +537,10 @@ class VoiceChanger:
             else None
         )
 
+    # Per-block conversion never needs autograd; inference mode also skips
+    # version-counter and view tracking. Buffers are allocated outside (realloc,
+    # generate_strength) and only written in place here, which is permitted.
+    @torch.inference_mode()
     def process_audio(
         self,
         audio_input: np.ndarray,
