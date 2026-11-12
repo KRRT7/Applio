@@ -104,7 +104,6 @@ import rvc.lib.zluda
 
 # Import Tabs
 from assets.app_shell import build_workspace, create_theme, stylesheet
-from tabs.inference.inference import inference_tab
 from tabs.settings.settings import settings_tab
 from tabs.realtime.realtime import realtime_tab
 
@@ -161,7 +160,6 @@ with gr.Blocks(
 ) as Applio:
     build_workspace(
         {
-            "inference": inference_tab,
             "realtime": realtime_tab,
             "settings": settings_tab,
         },

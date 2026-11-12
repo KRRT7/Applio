@@ -15,31 +15,18 @@ from tabs.settings.sections.themes import theme_tab
 from tabs.settings.sections.version import version_tab
 from tabs.settings.sections.lang import lang_tab
 from tabs.settings.sections.restart import restart_tab
-from tabs.settings.sections.filter import filter_tab, get_filter_trigger
 from tabs.settings.sections.rmvpe_high_register import rmvpe_high_register_tab
 
 
-def settings_tab(filter_state_trigger=None):
-    if filter_state_trigger is None:
-        filter_state_trigger = get_filter_trigger()
-
+def settings_tab():
     with gr.TabItem(label=i18n("General")):
-        with step_card(1, "List Filtering", i18n, description="Show a keyword filter for the model and index lists."):
-            filter_component = filter_tab()
-
-            filter_component.change(
-                fn=lambda checked: gr.update(value=str(checked)),
-                inputs=[filter_component],
-                outputs=[filter_state_trigger],
-                show_progress=False,
-            )
-        with step_card(2, "Pitch Correction", i18n, description="Fix high-register octave errors in RMVPE pitch."):
+        with step_card(1, "Pitch Correction", i18n, description="Fix high-register octave errors in RMVPE pitch."):
             rmvpe_high_register_tab()
-        with step_card(3, "Audio Devices", i18n, description="Configure drivers and the streaming sample rate."):
+        with step_card(2, "Audio Devices", i18n, description="Configure drivers and the streaming sample rate."):
             realtime_audio_tab()
-        with step_card(4, "Appearance & Language", i18n, description="Pick a theme and language. Applies after restart."):
+        with step_card(3, "Appearance & Language", i18n, description="Pick a theme and language. Applies after restart."):
             theme_tab()
             lang_tab()
-        with step_card(5, "Updates & System", i18n, description="Check for updates or restart the interface."):
+        with step_card(4, "Updates & System", i18n, description="Check for updates or restart the interface."):
             version_tab()
             restart_tab()

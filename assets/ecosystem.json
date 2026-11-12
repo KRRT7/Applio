@@ -45,7 +45,6 @@
   "guides": {
     "desktop": "/getting-started/desktop/",
     "installation": "/getting-started/installation/",
-    "inference": "/getting-started/inference/",
     "realtime": "/getting-started/realtime/",
     "separation": "/guides/uvr/",
     "storage": "/guides/moving-to-desktop/",

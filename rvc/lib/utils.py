@@ -1,7 +1,5 @@
 import os
 import sys
-import re
-import unicodedata
 
 import logging
 import warnings
@@ -143,63 +141,6 @@ def load_audio_ta(file, sample_rate):
         raise RuntimeError(f"An error occurred loading the audio: {error}")
 
     return audio
-
-
-def load_audio_infer(
-    file,
-    sample_rate,
-    **kwargs,
-):
-    import numpy as np
-    import soundfile as sf
-
-    formant_shifting = kwargs.get("formant_shifting", False)
-    try:
-        file = file.strip(" ").strip('"').strip("\n").strip('"').strip(" ")
-        if not os.path.isfile(file):
-            raise FileNotFoundError(f"File not found: {file}")
-        audio, sr = sf.read(file)
-        if len(audio.shape) > 1:
-            import librosa
-
-            audio = librosa.to_mono(audio.T)
-        if (
-            kwargs.get("cleanup_mode", "off") != "off"
-            and kwargs.get("cleanup_stage", "input") == "input"
-        ):
-            from rvc.lib.tools.audio_cleanup import cleanup_audio
-
-            audio = cleanup_audio(
-                audio, sr, kwargs["cleanup_mode"], kwargs.get("cleanup_strength", 12)
-            )
-        if sr != sample_rate:
-            import librosa
-
-            audio = librosa.resample(
-                audio, orig_sr=sr, target_sr=sample_rate, res_type="soxr_vhq"
-            )
-        if formant_shifting:
-            formant_qfrency = kwargs.get("formant_qfrency", 1.0)
-            formant_timbre = kwargs.get("formant_timbre", 1.0)
-
-            from rvc.lib.tools.formant import FormantShifter
-
-            audio = FormantShifter(sample_rate).process_file(
-                audio,
-                quefrency=formant_qfrency,
-                timbre=formant_timbre,
-            )
-    except Exception as error:
-        raise RuntimeError(f"An error occurred loading the audio: {error}")
-    return np.array(audio).flatten()
-
-
-def format_title(title):
-    formatted_title = unicodedata.normalize("NFC", title)
-    formatted_title = re.sub(r"[\u2500-\u257F]+", "", formatted_title)
-    formatted_title = re.sub(r"[^\w\s.-]", "", formatted_title, flags=re.UNICODE)
-    formatted_title = re.sub(r"\s+", "_", formatted_title)
-    return formatted_title
 
 
 def load_embedding(embedder_model, custom_embedder=None):
