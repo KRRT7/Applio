@@ -46,16 +46,9 @@
     "desktop": "/getting-started/desktop/",
     "installation": "/getting-started/installation/",
     "inference": "/getting-started/inference/",
-    "training": "/getting-started/training/",
-    "blender": "/getting-started/voice-blender/",
     "realtime": "/getting-started/realtime/",
-    "models": "/getting-started/installing-inference-models/",
-    "plugins": "/getting-started/plugins/",
-    "report": "/getting-started/report-error/",
-    "audio": "/getting-started/audio-analyzer/",
     "separation": "/guides/uvr/",
     "storage": "/guides/moving-to-desktop/",
-    "tensorboard": "/getting-started/tensorboard/",
     "jobs": "/getting-started/desktop/#follow-a-job"
   }
 }

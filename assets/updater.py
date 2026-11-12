@@ -126,8 +126,6 @@ def file_mode(name):
             "run-updater.bat",
             "run-applio.bat",
             "run-applio.sh",
-            "run-tensorboard.bat",
-            "run-tensorboard.sh",
             "LICENSE",
             "README.md",
             "UPDATING.md",

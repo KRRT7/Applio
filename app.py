@@ -11,10 +11,6 @@ from assets.updater import ensure_not_updating
 
 ensure_not_updating(now_dir)
 
-from rvc.lib.terminal import start_capture
-
-start_capture()
-
 # TODO: This path is regenerated all over the place in Applio
 # should probably be in a static module for everything to reference
 CONFIG_PATH = os.path.join(now_dir, "assets", "config.json")
@@ -109,22 +105,13 @@ import rvc.lib.zluda
 # Import Tabs
 from assets.app_shell import build_workspace, create_theme, stylesheet
 from tabs.inference.inference import inference_tab
-from tabs.train.train import train_tab
-from tabs.extra.extra import extra_tab
-from tabs.report.report import report_tab
-from tabs.download.download import download_tab
-from tabs.voice_blender.voice_blender import voice_blender_tab
-from tabs.plugins.plugins import plugins_tab
 from tabs.settings.settings import settings_tab
 from tabs.realtime.realtime import realtime_tab
-from tabs.tensorboard.tensorboard import tensorboard_tab
-from tabs.terminal.terminal import TERMINAL_CSS, terminal_tab
 
 # Run prerequisites
 from core import run_prerequisites_script
 
 run_prerequisites_script(
-    pretraineds_hifigan=True,
     models=True,
     exe=True,
 )
@@ -147,7 +134,7 @@ my_applio = (
     if loadThemes.read_current_theme() in ("Applio", "ParityError/Interstellar")
     else loadThemes.load_theme() or create_theme()
 )
-app_css = stylesheet() + TERMINAL_CSS
+app_css = stylesheet()
 
 # Define Gradio interface
 with gr.Blocks(
@@ -176,15 +163,7 @@ with gr.Blocks(
         {
             "inference": inference_tab,
             "realtime": realtime_tab,
-            "models": download_tab,
-            "training": train_tab,
-            "blender": voice_blender_tab,
-            "audio": extra_tab,
-            "plugins": plugins_tab,
             "settings": settings_tab,
-            "report": report_tab,
-            "tensorboard": tensorboard_tab,
-            "terminal": terminal_tab,
         },
         i18n,
     )
@@ -215,43 +194,6 @@ def launch_gradio(server_name: str, server_port: int) -> None:
             else {}
         ),
     )
-
-    # Mount TensorBoard proxy so it's accessible from any origin
-    from rvc.lib.tools.launch_tensorboard import get_tb_url
-    import httpx
-    from fastapi import Request, Response
-
-    @app.api_route(
-        "/tensorboard/{path:path}",
-        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
-    )
-    @app.api_route(
-        "/tensorboard",
-        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
-    )
-    async def tb_proxy(request: Request, path: str = ""):
-        tb_url = get_tb_url()
-        if not tb_url:
-            return Response("TensorBoard not started", status_code=503)
-        url = f"{tb_url.rstrip('/')}/{path}"
-        if request.url.query:
-            url = f"{url}?{request.url.query}"
-        async with httpx.AsyncClient() as client:
-            resp = await client.request(
-                method=request.method,
-                url=url,
-                headers={
-                    k: v
-                    for k, v in request.headers.items()
-                    if k.lower() not in ["host"]
-                },
-                content=await request.body(),
-            )
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type"),
-        )
 
     if client_mode:
         import time

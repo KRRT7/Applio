@@ -108,14 +108,7 @@ footer:not(.applio-footer) { display: none !important; }
 .applio-nav-item::before { content: ""; width: 16px; height: 16px; flex: none; background: currentColor; mask-size: contain; mask-repeat: no-repeat; }
 .applio-nav-item.primary::after { content: ""; position: absolute; left: 4px; width: 4px; height: 14px; border-radius: 8px; background: white; }
 #applio-sidebar button:focus-visible { outline: 2px solid #a1a1aa; outline-offset: 2px; }
-.applio-sidebar-footer { display: flex; flex-direction: column; padding: 0 12px; margin-top: 8px; }
-.applio-sidebar-footer a { display: inline-flex; align-items: center; gap: 8px; padding: 8px 0; line-height: 16px; border-radius: 8px; text-decoration: none; color: var(--app-muted); font-size: 12px; }
-.applio-sidebar-footer a:hover { color: white; }
-.applio-sidebar-resources { display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--app-border); padding-top: 8px; }
-.applio-sidebar-resources a { gap: 6px; }
 .applio-footer-link::before { content: ""; width: 14px; height: 14px; flex: none; background: currentColor; mask-size: contain; mask-repeat: no-repeat; }
-.applio-sidebar-support { display: flex; align-items: center; gap: 8px; color: var(--app-muted); font-size: 12px; }
-.applio-sidebar-footer a:focus-visible { outline: 2px solid #a1a1aa; outline-offset: 3px; }
 #applio-content { margin-left: 284px; padding: 24px 28px 16px; gap: 16px; min-width: 0 !important; flex-wrap: nowrap; }
 #applio-pages { width: 100%; max-width: 1440px; margin: 0 auto; border: 0; }
 #applio-pages > .tab-nav, #applio-pages > [role="tablist"] { display: none !important; }
@@ -360,7 +353,7 @@ html { scrollbar-gutter: stable; }
   #applio-navigation { display: none; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 5px; flex: none; overflow: visible; }
   #applio-sidebar.mobile-open #applio-navigation { display: grid; }
   #applio-navigation .applio-nav-group { display: contents; }
-  .applio-nav-heading, .applio-sidebar-footer { display: none; }
+  .applio-nav-heading { display: none; }
   #applio-sidebar button.applio-nav-item { min-width: 0; min-height: 42px; font-size: 11px; padding: 8px; gap: 6px; }
   #applio-content { margin-left: 0; padding: 24px 16px 16px; }
   .applio-page-heading { gap: 10px; }
