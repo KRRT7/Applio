@@ -182,6 +182,10 @@ class Realtime_Pipeline:
         self.window = 160
         self.f0_min = 50.0
         self.f0_max = 1100.0
+        # Coarse pitch buckets are spaced on the mel scale, matching how RVC
+        # models are trained, so the range limits must be in mel too.
+        self.f0_mel_min = 1127.0 * np.log(1.0 + self.f0_min / 700.0)
+        self.f0_mel_max = 1127.0 * np.log(1.0 + self.f0_max / 700.0)
         self.device = vc.config.device
         self.sid = sid
         self.torch_sid = torch.tensor([sid], device=self.device, dtype=torch.int64)
@@ -355,10 +359,11 @@ class Realtime_Pipeline:
             f0 = f0[0]
 
         f0 = torch.as_tensor(f0, dtype=torch.float32, device=self.device)
-        # f0 adjustments
+        # f0 adjustments: autotune snaps to notes first, then the pitch shift
+        # (manual, plus the proposed offset when enabled) is always applied.
         if f0_autotune is True:
             f0 = self.autotune_f0(f0, f0_autotune_strength)
-        elif proposed_pitch is True:
+        if proposed_pitch is True:
             limit = 12
             _f0 = f0.cpu().numpy().copy()
             # calculate median f0 of the audio
@@ -398,7 +403,8 @@ class Realtime_Pipeline:
         # quantizing f0 to 255 buckets to make coarse f0
         f0_mel = 1127.0 * torch.log(1.0 + f0 / 700.0)
         f0_mel = torch.clip(
-            (f0_mel - self.f0_min) * 254 / (self.f0_max - self.f0_min) + 1,
+            (f0_mel - self.f0_mel_min) * 254 / (self.f0_mel_max - self.f0_mel_min)
+            + 1,
             1,
             255,
             out=f0_mel,
