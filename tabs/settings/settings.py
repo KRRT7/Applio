@@ -10,7 +10,6 @@ from assets.app_shell import step_card
 
 i18n = I18nAuto()
 
-from tabs.settings.sections.presence import presence_tab
 from tabs.settings.sections.realtime_audio import realtime_audio_tab
 from tabs.settings.sections.themes import theme_tab
 from tabs.settings.sections.version import version_tab
@@ -38,14 +37,12 @@ def settings_tab(filter_state_trigger=None):
             )
         with step_card(2, "Pitch Correction", i18n, description="Fix high-register octave errors in RMVPE pitch."):
             rmvpe_high_register_tab()
-        with step_card(3, "Discord Integration", i18n, description="Show your current Applio activity in Discord."):
-            presence_tab()
-        with step_card(4, "Audio Devices", i18n, description="Configure drivers and the streaming sample rate."):
+        with step_card(3, "Audio Devices", i18n, description="Configure drivers and the streaming sample rate."):
             realtime_audio_tab()
-        with step_card(5, "Appearance & Language", i18n, description="Pick a theme and language. Applies after restart."):
+        with step_card(4, "Appearance & Language", i18n, description="Pick a theme and language. Applies after restart."):
             theme_tab()
             lang_tab()
-        with step_card(6, "Updates & System", i18n, description="Check for updates or restart the interface."):
+        with step_card(5, "Updates & System", i18n, description="Check for updates or restart the interface."):
             version_tab()
             restart_tab()
     with gr.TabItem(label=i18n("Training")):
