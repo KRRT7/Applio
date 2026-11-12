@@ -104,7 +104,6 @@ dependencies = [
 [package.dev-dependencies]
 ui = [
     { name = "gradio" },
-    { name = "pypresence" },
 ]
 
 [package.metadata]
@@ -147,10 +146,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-ui = [
-    { name = "gradio", specifier = "==6.20.0" },
-    { name = "pypresence", specifier = "==4.6.2" },
-]
+ui = [{ name = "gradio", specifier = "==6.20.0" }]
 
 [[package]]
 name = "audioread"
@@ -1835,15 +1831,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e4/11/b213bebff182584360cb8d17c72c1677fec5c5c228de439e63bcf8ab1c8f/pyparsing-3.3.3.tar.gz", hash = "sha256:928ae7e20211f3b6f3915a72f06a0cfd29ab9d24279dd6346b6b1a7146397d36", size = 1050487, upload-time = "2026-09-20T20:59:05.609Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/bb/d215ee7c73b61497b28a5503f9f53523f294fcc936762b7caf90e0c1c2b5/pyparsing-3.3.3-py3-none-any.whl", hash = "sha256:ece8c00a69cf01b45d0b1dedabb469c90d8caf996d4fda40f147627a122849a4", size = 126420, upload-time = "2026-09-20T20:59:04.025Z" },
-]
-
-[[package]]
-name = "pypresence"
-version = "4.6.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/22/ce/4ce38b7f36f4eec77b3d21a5885228bbe8ea6d5ea35ff0876f7889c3bbbd/pypresence-4.6.2.tar.gz", hash = "sha256:7e7e93de0e94a42314300ef6d15dd2c44c64ef74b7c749243bc226be2ab90687", size = 21335, upload-time = "2026-07-08T05:05:02.006Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/61/69bf5ed7393fc314b7129d509ec1bc9622ce98d7300a780d52fa3b95bc88/pypresence-4.6.2-py3-none-any.whl", hash = "sha256:6587e525a663699ca5fb8621ea147a9c264c135650c50afbccd7b5d9b4e28dc0", size = 13734, upload-time = "2026-07-08T05:05:00.67Z" },
 ]
 
 [[package]]
