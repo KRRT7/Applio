@@ -58,14 +58,19 @@ def _save_audio_sample_rate(value):
 
 def realtime_audio_tab():
     saved_asio, saved_sr = _load()
-    with gr.Row():
+    if not IS_WINDOWS:
+        gr.Markdown(
+            i18n("Only available on Windows."), elem_classes="applio-unavailable-note"
+        )
+    # ASIO is a Windows driver API. Elsewhere, show the controls dimmed and
+    # disabled so the card explains itself instead of rendering empty.
+    with gr.Row(elem_classes=None if IS_WINDOWS else "applio-unavailable"):
         with gr.Column():
             asio_enabled = gr.Checkbox(
                 label=i18n("Enable ASIO"),
                 info=i18n("Enable ASIO driver support. (Requires restarting Applio)"),
-                value=saved_asio,
-                interactive=True,
-                visible=IS_WINDOWS,
+                value=saved_asio and IS_WINDOWS,
+                interactive=IS_WINDOWS,
             )
             audio_sample_rate = gr.Dropdown(
                 label=i18n("Sample Rate"),
@@ -74,8 +79,8 @@ def realtime_audio_tab():
                 ),
                 choices=[44100, 48000, 88200, 96000, 176400, 192000],
                 value=saved_sr,
-                interactive=True,
-                visible=saved_asio and IS_WINDOWS,
+                interactive=IS_WINDOWS,
+                visible=saved_asio or not IS_WINDOWS,
             )
             if IS_WINDOWS:
                 asio_enabled.change(
