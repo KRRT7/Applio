@@ -79,6 +79,10 @@ def restart_applio():
         os.system("clear")
     else:
         os.system("cls")
+    if "__compiled__" in globals():
+        # Compiled build: sys.argv[0] is the program the user launched (the
+        # onefile launcher), not the unpacked binary in sys.executable.
+        os.execv(sys.argv[0], sys.argv)
     python = sys.executable
     os.execl(python, python, *sys.argv)
 
