@@ -135,6 +135,7 @@
     "Move files to custom embedder folder": "Move files to custom embedder folder",
     "Noise Reduction": "Noise Reduction",
     "Noise Reduction Strength": "Noise Reduction Strength",
+    "Only available on Windows.": "Only available on Windows.",
     "Output ASIO Channel": "Output ASIO Channel",
     "Output Device": "Output Device",
     "Output Folder": "Output Folder",

@@ -148,6 +148,8 @@ footer:not(.applio-footer) { display: none !important; }
 .applio-page .tab-container[role="tablist"] button.selected { color: var(--app-heading); border-bottom: 2px solid white; background: rgba(255,255,255,.05); }
 .applio-card { background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 12px; padding: 20px !important; gap: 16px; }
 .applio-card .form { border: 0; overflow: visible !important; }
+.applio-unavailable { opacity: .45; pointer-events: none; user-select: none; }
+.applio-unavailable-note { color: var(--app-muted); font-size: 13px; }
 .applio-card .form > .block { padding: 0 !important; border: 0 !important; background: transparent; }
 .applio-card .block:has(> label.checkbox-container) { padding: 1px 2px !important; overflow: visible !important; }
 .applio-card > .block.hide-container, .applio-card > .row, .applio-card > .column { flex: 0 0 auto; }
