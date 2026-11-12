@@ -12,8 +12,6 @@ dependencies = [
     "tqdm==4.68.4",
     "faiss-cpu==1.14.3",
     "librosa==0.11.0",
-    "scipy==1.17.1; python_version < '3.12'",
-    "scipy==1.18.0; python_version >= '3.12'",
     "soundfile==0.14.0",
     "stftpitchshift==2.0",
     "soxr==1.1.0",
