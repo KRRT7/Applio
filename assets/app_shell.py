@@ -20,7 +20,7 @@ _ROOT = Path(__file__).resolve().parent / "ui"
 
 # Navigation follows the app, exposing the tools available in the Gradio engine.
 SECTIONS = (
-    ("Voice", (("inference", "Convert Audio"), ("realtime", "Realtime"), ("tts", "Text to Speech"))),
+    ("Voice", (("inference", "Convert Audio"), ("realtime", "Realtime"))),
     ("Models & Training", (("models", "Models"), ("training", "Training"), ("blender", "Voice Blender"), ("tensorboard", "TensorBoard"))),
     ("Tools & Extras", (("audio", "Audio Tools"), ("plugins", "Plugins"))),
     ("System", (("terminal", "Terminal"), ("settings", "Settings"), ("report", "Report a Bug"))),
@@ -29,7 +29,6 @@ SECTIONS = (
 DESCRIPTIONS = {
     "inference": "Convert audio files using trained voice models with single and batch processing.",
     "realtime": "Transform your voice live with microphone input and realtime controls.",
-    "tts": "Generate speech from text and convert it with your voice models.",
     "models": "Download and import voice models, indexes and pretrained weights.",
     "training": "Prepare your dataset, extract features, train and export a voice model.",
     "blender": "Combine two voice models into a single checkpoint.",

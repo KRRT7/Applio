@@ -38,7 +38,7 @@ def filter_tab():
     checkbox = gr.Checkbox(
         label=i18n("Enable model/index list filter"),
         info=i18n(
-            "Adds a keyword filter for the model/index selection lists in the Inference and TTS tabs."
+            "Adds a keyword filter for the model/index selection lists in the Inference tab."
         ),
         value=load_config_filter(),
         interactive=True,

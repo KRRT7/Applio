@@ -47,7 +47,6 @@
     "installation": "/getting-started/installation/",
     "inference": "/getting-started/inference/",
     "training": "/getting-started/training/",
-    "tts": "/getting-started/tts/",
     "blender": "/getting-started/voice-blender/",
     "realtime": "/getting-started/realtime/",
     "models": "/getting-started/installing-inference-models/",

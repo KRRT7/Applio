@@ -113,7 +113,6 @@ from tabs.train.train import train_tab
 from tabs.extra.extra import extra_tab
 from tabs.report.report import report_tab
 from tabs.download.download import download_tab
-from tabs.tts.tts import tts_tab
 from tabs.voice_blender.voice_blender import voice_blender_tab
 from tabs.plugins.plugins import plugins_tab
 from tabs.settings.settings import settings_tab
@@ -185,7 +184,6 @@ with gr.Blocks(
         {
             "inference": inference_tab,
             "realtime": realtime_tab,
-            "tts": tts_tab,
             "models": download_tab,
             "training": train_tab,
             "blender": voice_blender_tab,
