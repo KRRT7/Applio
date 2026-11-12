@@ -39,7 +39,7 @@ jobs:
           .\env\python.exe assets/build_update.py --seed-install --output "$env:RUNNER_TEMP\applio-update-package"
       - name: Clean up unnecessary files
         run: |
-          Remove-Item -Path 'LICENSE', 'run-tensorboard.sh', 'run-install.sh', 'run-applio.sh', 'run-install.bat', '.gitignore', '.github', '.git' -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path 'LICENSE', 'run-install.sh', 'run-applio.sh', 'run-install.bat', '.gitignore', '.github', '.git' -Recurse -Force -ErrorAction SilentlyContinue
           Get-ChildItem -Path . -Include __pycache__ -Recurse -Directory | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
       - name: Read version from config_template.json
         id: get-version

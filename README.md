@@ -21,8 +21,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/IAHispano/Applio-Plugins" target="_blank">🛒 Plugins</a>
-  •
   <a href="https://huggingface.co/IAHispano/Applio/tree/main/Compiled" target="_blank">📦 Compiled</a>
   •
   <a href="https://applio.org/playground" target="_blank">🎮 Playground</a>
@@ -37,7 +35,7 @@
 
 ## Introduction
 
-Applio is a powerful voice conversion tool focused on simplicity, quality, and performance. Whether you're an artist, developer, or researcher, Applio offers a straightforward platform for high-quality voice transformations. Its flexible design allows for customization through plugins and configurations, catering to a wide range of projects.
+Applio is a powerful voice conversion tool focused on simplicity, quality, and performance. Whether you're an artist, developer, or researcher, Applio offers a straightforward platform for high-quality voice transformations. Its flexible design allows for customization through configurations, catering to a wide range of projects.
 
 ## Terms of Use and Commercial Usage
 
@@ -77,13 +75,6 @@ For compiled Windows releases, close Applio and run `run-updater.bat` to install
 the latest release while preserving models, logs, audio, presets and settings.
 Older builds can add the updater once by extracting `ApplioUpdater.zip` from
 the GitHub release assets into their existing folder.
-
-### 3. Optional: TensorBoard Monitoring
-
-To monitor training or visualize data:
-
-- **Windows:** Run `run-tensorboard.bat`.
-- **Linux/macOS:** Run `run-tensorboard.sh`.
 
 ### Development Setup
 

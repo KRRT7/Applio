@@ -15,11 +15,7 @@ run-install:
 run-applio:
 	uv run app.py --share
 
-# Run Tensorboard
-run-tensorboard:
-	uv run core.py tensorboard
-
-# Regenerate requirements*.txt from uv.lock (used by the Windows updater and plugins)
+# Regenerate requirements*.txt from uv.lock (used by the Windows updater)
 requirements:
 	uv export --frozen --no-hashes --no-emit-project -o requirements.txt
 	uv export --frozen --no-default-groups --no-hashes --no-emit-project -o requirements-engine.txt

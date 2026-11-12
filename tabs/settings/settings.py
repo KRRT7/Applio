@@ -15,8 +15,6 @@ from tabs.settings.sections.themes import theme_tab
 from tabs.settings.sections.version import version_tab
 from tabs.settings.sections.lang import lang_tab
 from tabs.settings.sections.restart import restart_tab
-from tabs.settings.sections.model_author import model_author_tab
-from tabs.settings.sections.precision import precision_tab
 from tabs.settings.sections.filter import filter_tab, get_filter_trigger
 from tabs.settings.sections.rmvpe_high_register import rmvpe_high_register_tab
 
@@ -45,8 +43,3 @@ def settings_tab(filter_state_trigger=None):
         with step_card(5, "Updates & System", i18n, description="Check for updates or restart the interface."):
             version_tab()
             restart_tab()
-    with gr.TabItem(label=i18n("Training")):
-        with step_card(1, "Model Author", i18n, description="Set the name shown in exported model information."):
-            model_author_tab()
-        with step_card(2, "Training Precision", i18n, description="Choose the numeric precision for training and inference."):
-            precision_tab()

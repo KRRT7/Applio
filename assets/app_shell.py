@@ -21,28 +21,18 @@ _ROOT = Path(__file__).resolve().parent / "ui"
 # Navigation follows the app, exposing the tools available in the Gradio engine.
 SECTIONS = (
     ("Voice", (("inference", "Convert Audio"), ("realtime", "Realtime"))),
-    ("Models & Training", (("models", "Models"), ("training", "Training"), ("blender", "Voice Blender"), ("tensorboard", "TensorBoard"))),
-    ("Tools & Extras", (("audio", "Audio Tools"), ("plugins", "Plugins"))),
-    ("System", (("terminal", "Terminal"), ("settings", "Settings"), ("report", "Report a Bug"))),
+    ("System", (("settings", "Settings"),)),
 )
 
 DESCRIPTIONS = {
     "inference": "Convert audio files using trained voice models with single and batch processing.",
     "realtime": "Transform your voice live with microphone input and realtime controls.",
-    "models": "Download and import voice models, indexes and pretrained weights.",
-    "training": "Prepare your dataset, extract features, train and export a voice model.",
-    "blender": "Combine two voice models into a single checkpoint.",
-    "tensorboard": "Monitor training loss and metrics in real time.",
-    "audio": "Inspect models, analyze audio and extract pitch curves.",
-    "plugins": "Manage extensions for your Applio workspace.",
-    "terminal": "Follow live application output, progress and errors without leaving your workspace.",
     "settings": "Configure your engine, audio devices and preferences.",
-    "report": "Inspect system information and get help with an issue.",
 }
 
 # Exact SVG nodes from the app's lucide-react 1.47.0 package (ISC).
-# Shared entries follow frontend/web/components/layout/nav.ts; Terminal is also
-# used by TrainingConsole.tsx. See ui/LUCIDE-LICENSE.md for attribution.
+# Shared entries follow frontend/web/components/layout/nav.ts.
+# See ui/LUCIDE-LICENSE.md for attribution.
 _ICONS = json.loads((_ROOT / "icons.json").read_text(encoding="utf-8"))
 
 
@@ -108,7 +98,6 @@ def step_card(number, title, translate=lambda text: text, description=None):
 def build_workspace(builders, translate=lambda text: text):
     """Build persistent Gradio workspaces with app-style sidebar navigation."""
     nav = {}
-    terminal_controls = None
     entries = [item for _, items in SECTIONS for item in items]
     with gr.Row(elem_id="applio-shell", equal_height=False):
         with gr.Column(scale=0, min_width=220, elem_id="applio-sidebar"):
@@ -149,51 +138,28 @@ def build_workspace(builders, translate=lambda text: text):
                                 variant="primary" if key == "inference" else "secondary",
                                 elem_classes=["applio-nav-item", f"applio-nav-{key}"],
                             )
-            links = ECOSYSTEM["links"]
-            gr.HTML(
-                '<div class="applio-sidebar-footer">'
-                + '<div class="applio-sidebar-resources">'
-                + _link(translate("Website"), links["website"], "website")
-                + _link(translate("Documentation"), links["docs"], "docs")
-                + '</div>'
-                + _link(translate("Discord support"), links["discord"], "community")
-                + '<div class="applio-sidebar-support">'
-                + _link(translate("Support us"), links["support"], "support")
-                + '<span aria-hidden="true">·</span>'
-                + _link(translate("Patreon"), links["patreon"])
-                + '</div>'
-                + '</div>'
-            )
 
         with gr.Column(elem_id="applio-content", min_width=0):
             with gr.Tabs(selected="inference", elem_id="applio-pages") as pages:
                 for key, title in entries:
                     with gr.Tab(title, id=key, elem_id=f"applio-page-{key}", elem_classes="applio-page"):
                         page_header(key, title, translate)
-                        controls = builders[key]()
-                        if key == "terminal":
-                            terminal_controls = controls
+                        builders[key]()
             gr.HTML(
                 '<footer class="applio-footer">'
                 + _link(translate("Terms of use"), "https://github.com/IAHispano/Applio/blob/main/TERMS_OF_USE.md")
                 + '</footer>'
             )
 
-    terminal_timer, terminal_live = terminal_controls or (None, None)
-
-    def navigate(key, live_updates=True):
-        updates = [gr.Tabs(selected=key)] + [
+    def navigate(key):
+        return [gr.Tabs(selected=key)] + [
             gr.Button(variant="primary" if item == key else "secondary") for item in nav
         ]
-        if terminal_timer is not None:
-            updates.append(gr.Timer(active=key == "terminal" and live_updates))
-        return updates
 
     def bind_navigation(button, key):
         event = button.click(
             partial(navigate, key),
-            inputs=[terminal_live] if terminal_live is not None else None,
-            outputs=[pages, *nav.values(), *([terminal_timer] if terminal_timer is not None else [])],
+            outputs=[pages, *nav.values()],
             queue=False, show_progress="hidden",
         )
         event.then(
