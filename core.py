@@ -67,24 +67,6 @@ def run_quiet(command, **kwargs):
     return subprocess.run(command, **kwargs)
 
 
-@lru_cache(maxsize=1)
-def load_voices_data():
-    tts_path = os.path.join(
-        current_script_directory, "rvc", "lib", "tools", "tts_voices.json"
-    )
-    if os.path.exists(tts_path):
-        try:
-            with open(tts_path, "r", encoding="utf-8") as file:
-                return json.load(file)
-        except Exception:
-            pass
-    return []
-
-
-voices_data = load_voices_data()
-locales = list({voice["ShortName"] for voice in voices_data}) or ["en-US-AnaNeural"]
-
-
 @lru_cache(maxsize=None)
 def import_voice_converter():
     try:
@@ -274,109 +256,6 @@ def run_batch_infer_script(
     infer_pipeline = import_voice_converter()
     infer_pipeline.convert_audio_batch(**kwargs)
     return f"Files from {input_folder} inferred successfully."
-
-
-def run_tts_script(
-    tts_file: str,
-    tts_text: str,
-    tts_voice: str,
-    tts_rate: int,
-    pitch: int,
-    index_rate: float,
-    volume_envelope: float,
-    protect: float,
-    f0_method: str,
-    output_tts_path: str,
-    output_rvc_path: str,
-    pth_path: str,
-    index_path: str,
-    f0_autotune: bool,
-    f0_autotune_strength: float,
-    proposed_pitch: bool,
-    proposed_pitch_threshold: float,
-    export_format: str,
-    embedder_model: str,
-    embedder_model_custom: str = None,
-    sid: int = 0,
-    formant_shifting: bool = False,
-    formant_qfrency: float = 1.0,
-    formant_timbre: float = 1.0,
-    cleanup_mode: str = "off",
-    cleanup_strength: float = 12,
-):
-    tts_script_path = os.path.join(
-        current_script_directory, "rvc", "lib", "tools", "tts.py"
-    )
-
-    if os.path.exists(output_tts_path) and os.path.abspath(output_tts_path).startswith(
-        os.path.abspath(os.path.join(current_script_directory, "assets"))
-    ):
-        try:
-            os.remove(output_tts_path)
-        except Exception:
-            pass
-
-    cmd = [
-        python,
-        tts_script_path,
-        "--tts-text",
-        tts_text or "",
-        "--tts-voice",
-        tts_voice or "en-US-AnaNeural",
-        "--tts-rate",
-        str(tts_rate),
-        "--output-tts-path",
-        output_tts_path,
-    ]
-    if tts_file and os.path.exists(tts_file):
-        cmd.extend(["--tts-file", tts_file])
-
-    result = run_quiet(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        err_msg = result.stderr.strip()
-        if "No module named" in err_msg:
-            pkg = err_msg.split("No module named")[-1].strip().strip("'\"")
-            raise RuntimeError(
-                f"Missing Python package '{pkg}'. Please run: uv sync"
-            )
-        raise RuntimeError(err_msg or f"TTS failed with code {result.returncode}")
-
-    if output_rvc_path and pth_path and os.path.exists(pth_path):
-        infer_pipeline = import_voice_converter()
-        infer_pipeline.convert_audio(
-            pitch=pitch,
-            index_rate=index_rate,
-            volume_envelope=volume_envelope,
-            protect=protect,
-            f0_method=f0_method,
-            audio_input_path=output_tts_path,
-            audio_output_path=output_rvc_path,
-            model_path=pth_path,
-            index_path=index_path,
-            f0_autotune=f0_autotune,
-            f0_autotune_strength=f0_autotune_strength,
-            proposed_pitch=proposed_pitch,
-            proposed_pitch_threshold=proposed_pitch_threshold,
-            formant_shifting=formant_shifting,
-            formant_qfrency=formant_qfrency,
-            formant_timbre=formant_timbre,
-            cleanup_mode=cleanup_mode,
-            cleanup_strength=cleanup_strength,
-            cleanup_stage="output",
-            export_format=export_format,
-            embedder_model=embedder_model,
-            embedder_model_custom=embedder_model_custom,
-            sid=sid,
-        )
-        return f"Text synthesized and converted successfully.", output_rvc_path.replace(
-            ".wav", f".{export_format.lower()}"
-        )
-
-    if cleanup_mode != "off":
-        from rvc.lib.tools.audio_cleanup import cleanup_file
-
-        cleanup_file(output_tts_path, cleanup_mode, cleanup_strength)
-    return f"Text synthesized successfully.", output_tts_path
 
 
 def run_preprocess_script(
@@ -713,7 +592,7 @@ VERSION = _get_version()
 
 
 def _infer_opts(func):
-    """Core inference options shared by infer, batch_infer and tts."""
+    """Core inference options shared by infer and batch_infer."""
     opts = [
         click.option(
             "--cleanup-mode",
@@ -901,40 +780,6 @@ def batch_infer(**kwargs):
     """Run voice conversion on multiple audio files in a folder."""
     result = run_batch_infer_script(**kwargs)
     click.echo(result)
-
-
-@cli.command()
-@click.option("--tts-file", required=True, help="File with text to be synthesized.")
-@click.option("--tts-text", required=True, help="Text to be synthesized.")
-@click.option(
-    "--tts-voice",
-    required=True,
-    type=click.Choice(locales, case_sensitive=False),
-    help="Voice to use for TTS synthesis.",
-)
-@click.option(
-    "--tts-rate",
-    type=click.IntRange(-100, 100),
-    default=0,
-    help="Speaking rate (-100 slower .. 100 faster).",
-)
-@click.option(
-    "--output-tts-path", required=True, help="Path to save the synthesized TTS audio."
-)
-@click.option(
-    "--output-rvc-path", required=True, help="Path to save the voice-converted audio."
-)
-@click.option(
-    "--pth-path", required=True, help="Full path to the RVC model file (.pth)."
-)
-@click.option(
-    "--index-path", required=True, help="Full path to the index file (.index)."
-)
-@_infer_opts
-def tts(**kwargs):
-    """Synthesise speech with TTS and apply voice conversion."""
-    result = run_tts_script(**kwargs)
-    click.echo(result[0])
 
 
 @cli.command()
