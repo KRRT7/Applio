@@ -26,3 +26,6 @@ venv
 .venv
 .applio-update/
 
+
+# Nuitka build output
+/build/

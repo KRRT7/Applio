@@ -14,6 +14,7 @@ sys.path.append(now_dir)
 from rvc.realtime.callbacks import AudioCallbacks
 from rvc.realtime.audio import list_audio_device, resolve_sample_rate
 from rvc.realtime.core import AUDIO_SAMPLE_RATE
+from rvc.lib.user_config import BUNDLED_LOGS_PREFIX, get_bundled_logs_dir
 
 from assets.i18n.i18n import I18nAuto
 from assets.app_shell import step_card
@@ -37,6 +38,21 @@ os.makedirs(custom_embedder_root, exist_ok=True)
 
 custom_embedder_root_relative = os.path.relpath(custom_embedder_root, now_dir)
 model_root_relative = os.path.relpath(model_root, now_dir)
+
+
+def model_roots():
+    """Folders to list models from: the user's logs, then read-only bundled models."""
+    roots = [model_root_relative]
+    if get_bundled_logs_dir() is not None:
+        roots.append(BUNDLED_LOGS_PREFIX)
+    return roots
+
+
+def is_bundled(path):
+    normalized = os.path.normpath(path).replace("\\", "/")
+    return normalized == BUNDLED_LOGS_PREFIX or normalized.startswith(
+        BUNDLED_LOGS_PREFIX + "/"
+    )
 
 
 def normalize_path(p):
@@ -75,7 +91,11 @@ def get_files(type="model"):
     best = {}
     order = 0
 
-    for root, _, files in os.walk(model_root_relative, followlinks=True):
+    for root, _, files in (
+        entry
+        for model_root_path in model_roots()
+        for entry in os.walk(model_root_path, followlinks=True)
+    ):
         for file in files:
             if not file.endswith(exts):
                 continue
@@ -121,7 +141,11 @@ def path_choices(paths):
     choices = []
     for name, path in zip(names, paths):
         if counts[name] > 1:
-            name = f"{name} ({os.path.basename(os.path.dirname(path))})"
+            # A shipped model can share its name with one of the user's own.
+            suffix = (
+                "bundled" if is_bundled(path) else os.path.basename(os.path.dirname(path))
+            )
+            name = f"{name} ({suffix})"
         choices.append((name, path))
     return choices
 

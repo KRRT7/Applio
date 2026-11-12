@@ -37,6 +37,10 @@ dependencies = [
 ]
 
 [dependency-groups]
+build = [
+    "nuitka==4.3.5",
+    "zstandard==0.25.0",
+]
 # Gradio interface; requirements-engine.txt is exported without it.
 ui = [
     "gradio==6.20.0",

@@ -3,6 +3,13 @@ import os
 import shutil
 import sys
 
+# Nuitka-compiled build: run from the unpacked program folder and keep user data
+# in a persistent per-user folder (see assets/compiled_runtime.py).
+if "__compiled__" in globals():
+    from assets.compiled_runtime import prepare
+
+    prepare(os.path.dirname(os.path.abspath(__file__)))
+
 # We need the CWD for finding the config file, but while we're at it, add it to sys.path
 now_dir = os.getcwd()
 sys.path.append(now_dir)

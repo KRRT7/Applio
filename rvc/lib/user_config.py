@@ -44,15 +44,35 @@ def get_logs_dir():
     return str(Path(configured).resolve() if configured else root / "logs")
 
 
+# Logical prefix of read-only voice models shipped inside a compiled build.
+BUNDLED_LOGS_PREFIX = "bundled/logs"
+
+
+def get_bundled_logs_dir():
+    """Folder of read-only bundled voice models, or None when there is none."""
+    folder = os.environ.get("APPLIO_BUNDLED_LOGS_DIR")
+    return str(Path(folder).resolve()) if folder and Path(folder).is_dir() else None
+
+
+def _resolve_inside(root, relative, value, label):
+    root = Path(root).resolve()
+    resolved = (root / relative).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"Path escapes {label} folder: {value}")
+    return str(resolved)
+
+
 def resolve_logs_path(value):
-    """Resolve the UI's logical logs/ paths for realtime model loading."""
+    """Resolve the UI's logical logs/ and bundled/logs/ paths for realtime model loading."""
     normalized = (value or "").replace("\\", "/")
     if normalized == "logs" or normalized.startswith("logs/"):
-        root = Path(get_logs_dir()).resolve()
-        resolved = (root / normalized[5:]).resolve()
-        if not resolved.is_relative_to(root):
-            raise ValueError(f"Path escapes logs folder: {value}")
-        return str(resolved)
+        return _resolve_inside(get_logs_dir(), normalized[5:], value, "logs")
+    prefix = BUNDLED_LOGS_PREFIX
+    if normalized == prefix or normalized.startswith(prefix + "/"):
+        bundled = get_bundled_logs_dir()
+        if bundled is None:
+            raise ValueError(f"No bundled models are available: {value}")
+        return _resolve_inside(bundled, normalized[len(prefix) + 1 :], value, "bundled models")
     return value
 
 
