@@ -25,6 +25,9 @@ class VideoCapturer:
 
         # Initialize Windows-specific components if on Windows
         if platform.system() == "Windows":
+            from _vendor.modules.wincom import ensure_com
+
+            ensure_com()  # pygrabber uses COM; may run on a worker thread
             self.graph = FilterGraph()
             # Verify device exists
             devices = self.graph.get_input_devices()

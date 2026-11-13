@@ -22,6 +22,9 @@ def list_cameras() -> List[Camera]:
         try:
             from pygrabber.dshow_graph import FilterGraph
 
+            from _vendor.modules.wincom import ensure_com
+
+            ensure_com()  # pygrabber uses COM; may run on a worker thread
             cams = list(enumerate(FilterGraph().get_input_devices()))
         except Exception as exc:
             print(f"Error detecting cameras: {exc}")
