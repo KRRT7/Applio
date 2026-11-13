@@ -25,6 +25,16 @@ would otherwise introduce:
    ``[1]`` and squeeze the added axis on the Gather output.
    (Filed upstream as microsoft/onnxruntime#28180.)
 
+5. **Broadcast-redundant Expand removal** — Style-modulated models
+   (HyperSwap's AdaIN-style blocks) compute ``Op(t, Expand(s, Shape(t)))``
+   with Op in {Add, Mul, Sub, Div}. The runtime ``Shape`` falls back to CPU
+   and splits the graph, yet the ``Expand`` is redundant: the binary op
+   broadcasts ``s`` against ``t`` to the same shape. We feed ``s`` directly.
+   Same math, but not bit-identical: ORT's CPU kernels round broadcast and
+   pre-expanded operands slightly differently (~1e-6 per rewritten op),
+   which compounds to ~1e-3 on HyperSwap's [-1, 1] output (< 1/8 of an
+   8-bit level).
+
 All passes are cached on disk with a ``_coreml`` suffix (plus the input shape
 when one is given, e.g. ``_coreml_1x3x320x320``) so the rewrite cost
 is paid only once per model and shape.
@@ -71,6 +81,11 @@ def optimize_for_coreml(model_path: str, input_shape: tuple = None) -> str:
     model = onnx.load(model_path)
     changed = False
 
+    # Pinning a dynamic input (e.g. batch "None") to input_shape is itself
+    # worth a cached copy: CoreML compiles static graphs without fallbacks.
+    if input_shape is not None and _pin_input_shape(model, input_shape):
+        changed = True
+
     if _fold_shape_gather(model, input_shape):
         changed = True
 
@@ -87,6 +102,10 @@ def optimize_for_coreml(model_path: str, input_shape: tuple = None) -> str:
     if _rewrite_scalar_gather(model):
         changed = True
 
+    # Each removal can make further shapes inferable; repeat to a fixpoint.
+    while _drop_broadcast_expand(model):
+        changed = True
+
     if not changed:
         return model_path
 
@@ -97,6 +116,20 @@ def optimize_for_coreml(model_path: str, input_shape: tuple = None) -> str:
 
     onnx.save(model, optimized_path)
     return optimized_path
+
+
+def _pin_input_shape(model, input_shape) -> bool:
+    """Set the first graph input's dims to input_shape; True if any changed."""
+    dims = model.graph.input[0].type.tensor_type.shape.dim
+    if len(dims) != len(input_shape):
+        return False
+    changed = False
+    for dim, value in zip(dims, input_shape):
+        if not (dim.HasField("dim_value") and dim.dim_value == value):
+            dim.Clear()
+            dim.dim_value = value
+            changed = True
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +569,82 @@ def _rewrite_scalar_gather(model) -> bool:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _drop_broadcast_expand(model) -> bool:
+    """Remove ``Expand(s, Shape(t))`` feeding only ``Op(t, ·)`` broadcasts.
+
+    Only rewrites when every consumer of the Expand is an elementwise
+    Add/Mul/Sub/Div whose other operand is ``t`` itself (the tensor whose
+    shape the Expand targets) or a tensor whose fully static inferred shape
+    equals ``t``'s. Broadcasting ``s`` against that operand then yields the
+    same shape the Expand would have produced. Shape nodes left without
+    consumers are removed too.
+    """
+    import onnx
+
+    graph = model.graph
+    try:
+        inferred = onnx.shape_inference.infer_shapes(model, data_prop=True).graph
+    except Exception:
+        inferred = graph
+    static = {}
+    for vi in list(inferred.value_info) + list(inferred.input) + list(inferred.output):
+        dims = vi.type.tensor_type.shape.dim
+        if dims and all(d.HasField("dim_value") and d.dim_value > 0 for d in dims):
+            static[vi.name] = tuple(d.dim_value for d in dims)
+
+    def same_shape(a, b):
+        return a == b or (a in static and static.get(a) == static.get(b))
+
+    producer = {out: node for node in graph.node for out in node.output}
+    consumers = {}
+    for node in graph.node:
+        for name in node.input:
+            consumers.setdefault(name, []).append(node)
+    graph_outputs = {o.name for o in graph.output}
+
+    removed = set()
+    for node in graph.node:
+        if node.op_type != "Expand" or len(node.input) != 2:
+            continue
+        shape_node = producer.get(node.input[1])
+        if shape_node is None or shape_node.op_type != "Shape" or len(shape_node.attribute):
+            continue  # Shape with start/end attributes is a slice; skip
+        target = shape_node.input[0]
+        out = node.output[0]
+        uses = consumers.get(out, [])
+        if not uses or out in graph_outputs:
+            continue
+        def other(use):
+            a, b = use.input
+            return b if a == out else a
+
+        ok = all(
+            use.op_type in ("Add", "Mul", "Sub", "Div")
+            and len(use.input) == 2
+            and out in use.input
+            and other(use) != out
+            and same_shape(other(use), target)
+            for use in uses
+        )
+        if not ok:
+            continue
+        for use in uses:
+            for i, name in enumerate(use.input):
+                if name == out:
+                    use.input[i] = node.input[0]
+        removed.add(id(node))
+
+    if not removed:
+        return False
+
+    kept = [n for n in graph.node if id(n) not in removed]
+    used = {name for n in kept for name in n.input} | graph_outputs
+    kept = [n for n in kept if not (n.op_type == "Shape" and n.output[0] not in used)]
+    del graph.node[:]
+    graph.node.extend(kept)
+    return True
+
 
 def _preserve_emap_position(model, numpy_helper):
     """Keep the insightface emap (512×512 matrix) as the last initializer."""

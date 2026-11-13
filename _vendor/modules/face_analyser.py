@@ -35,6 +35,44 @@ def reset_face_analyser() -> None:
         FACE_ANALYSER = None
 
 
+# The buffalo_l files the pipeline uses: detection (every live frame),
+# recognition (source-face embedding) and 106-point landmarks (mouth mask).
+# The pack's 1k3d68 and genderage models are not used.
+_ANALYSER_MODEL_FILES = ("det_10g.onnx", "w600k_r50.onnx", "2d106det.onnx")
+# Fixed input shapes for the batch-dynamic models, so CoreML gets a static
+# graph (the detector gets the same treatment in _optimize_det_model).
+_STATIC_INPUT_SHAPES = {"w600k_r50.onnx": (1, 3, 112, 112), "2d106det.onnx": (1, 3, 192, 192)}
+
+
+def _build_face_analysis(providers) -> Any:
+    """A FaceAnalysis that loads only _ANALYSER_MODEL_FILES.
+
+    insightface's FaceAnalysis(allowed_modules=...) still creates a session
+    for every .onnx in the pack folder before filtering, including the
+    unused models and the cached ``det_10g_coreml*`` copies, which on CoreML
+    means several wasted compiles at startup.
+    """
+    model_dir = os.path.join(os.path.expanduser("~"), ".insightface", "models", "buffalo_l")
+    analyser = insightface.app.FaceAnalysis.__new__(insightface.app.FaceAnalysis)
+    analyser.model_dir = model_dir
+    analyser.models = {}
+    from _vendor.modules.onnx_optimize import IS_APPLE_SILICON, optimize_for_coreml
+
+    uses_coreml = any(
+        (p[0] if isinstance(p, tuple) else p) == "CoreMLExecutionProvider" for p in providers
+    )
+    for filename in _ANALYSER_MODEL_FILES:
+        path = os.path.join(model_dir, filename)
+        if IS_APPLE_SILICON and uses_coreml and filename in _STATIC_INPUT_SHAPES:
+            path = optimize_for_coreml(path, input_shape=_STATIC_INPUT_SHAPES[filename])
+        model = insightface.model_zoo.get_model(path, providers=providers)
+        if model is None:
+            raise RuntimeError(f"insightface did not recognise {filename}")
+        analyser.models[model.taskname] = model
+    analyser.det_model = analyser.models["detection"]
+    return analyser
+
+
 def get_face_analyser() -> Any:
     """Get face analyser with thread-safe initialization."""
     global FACE_ANALYSER
@@ -54,11 +92,7 @@ def get_face_analyser() -> Any:
 
                 ensure_insightface_pack('buffalo_l')
                 providers = build_provider_config()
-                analyser = insightface.app.FaceAnalysis(
-                    name='buffalo_l',
-                    providers=providers,
-                    allowed_modules=['detection', 'recognition', 'landmark_2d_106']
-                )
+                analyser = _build_face_analysis(providers)
                 det_size = _current_det_size()
                 analyser.prepare(ctx_id=0, det_size=det_size)
                 _optimize_det_model(analyser, providers, det_size)

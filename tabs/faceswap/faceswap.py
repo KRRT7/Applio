@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import threading
+import time
 from collections import deque
 
 import cv2
@@ -80,9 +81,19 @@ def _dlc():
             "are in the 'faceswap' dependency group."
         ) from exc
     if not getattr(_dlc, "_listening", False):
-        deep_live_cam.add_status_listener(lambda message, _scope: _MESSAGES.append(message))
+        deep_live_cam.add_status_listener(_on_status)
         _dlc._listening = True
     return deep_live_cam
+
+
+# Routine messages already reflected in the status line (camera size,
+# virtual camera device) are not repeated.
+_QUIET_SCOPES = {"DLC.LIVE", "DLC.VCAM"}
+
+
+def _on_status(message, scope):
+    if scope not in _QUIET_SCOPES or "unavailable" in message or "fail" in message.lower():
+        _MESSAGES.append((time.monotonic(), message))
 
 
 def camera_choices():
@@ -220,8 +231,8 @@ def _status_text():
             parts.append(f"{i18n('virtual camera unavailable')}: {vcam.error}")
         elif vcam.device:
             parts.append(f"{i18n('virtual camera')}: {vcam.device}")
-    if _MESSAGES:
-        parts.append(_MESSAGES[-1])
+    if _MESSAGES and time.monotonic() - _MESSAGES[-1][0] < 5.0:
+        parts.append(_MESSAGES[-1][1])  # latest library message, for 5 s
     return " · ".join(parts)
 
 
@@ -283,9 +294,9 @@ def faceswap_tab():
                         many_faces = gr.Checkbox(label=i18n("All faces"), value=saved["many_faces"])
                     with gr.Row():
                         mirror = gr.Checkbox(label=i18n("Mirror"), value=saved["mirror"])
-                        async_swap = gr.Checkbox(label=i18n("Async swap"), value=saved["async_swap"],
-                                                 info=i18n("Smoother motion on slow hardware; expressions lag slightly."))
                         show_fps = gr.Checkbox(label=i18n("Show FPS"), value=saved["show_fps"])
+                    async_swap = gr.Checkbox(label=i18n("Async swap"), value=saved["async_swap"],
+                                             info=i18n("Smoother motion on slow hardware; expressions lag slightly."))
 
             with gr.Column(scale=2, min_width=360):
                 preview = gr.Image(label=i18n("Live preview"), interactive=False, format="jpeg", height=480)
