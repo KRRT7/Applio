@@ -21,11 +21,13 @@ _ROOT = Path(__file__).resolve().parent / "ui"
 # Navigation follows the app, exposing the tools available in the Gradio engine.
 SECTIONS = (
     ("Voice", (("realtime", "Realtime"),)),
+    ("Video", (("faceswap", "Face Swap"),)),
     ("System", (("settings", "Settings"),)),
 )
 
 DESCRIPTIONS = {
     "realtime": "Transform your voice live with microphone input and realtime controls.",
+    "faceswap": "Swap a face into your camera live and send it to a virtual camera.",
     "settings": "Configure your engine, audio devices and preferences.",
 }
 

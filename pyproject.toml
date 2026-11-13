@@ -45,11 +45,15 @@ build = [
 ui = [
     "gradio==6.20.0",
 ]
+# Live face swap (Face Swap tab), via the headless Deep-Live-Cam library.
+faceswap = [
+    "deep-live-cam",
+]
 
 [tool.uv]
 # Applio runs from the source tree (app.py / core.py); it is not an installable package.
 package = false
-default-groups = ["ui"]
+default-groups = ["ui", "faceswap"]
 # Resolve each OS separately: Windows pins its own CUDA runtime wheels for onnxruntime-gpu.
 environments = [
     "sys_platform == 'win32'",
@@ -58,6 +62,7 @@ environments = [
 ]
 
 [tool.uv.sources]
+deep-live-cam = { path = "../Deep-Live-Cam", editable = true }
 torch = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 torchaudio = [{ index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }]
 

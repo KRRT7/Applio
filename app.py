@@ -113,6 +113,7 @@ import rvc.lib.zluda
 from assets.app_shell import build_workspace, create_theme, stylesheet
 from tabs.settings.settings import settings_tab
 from tabs.realtime.realtime import realtime_tab
+from tabs.faceswap.faceswap import faceswap_tab
 
 # Run prerequisites
 from core import run_prerequisites_script
@@ -168,6 +169,7 @@ with gr.Blocks(
     build_workspace(
         {
             "realtime": realtime_tab,
+            "faceswap": faceswap_tab,
             "settings": settings_tab,
         },
         i18n,
