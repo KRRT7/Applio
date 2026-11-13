@@ -20,6 +20,7 @@ simple_map: Dict[str, Any] = {}             # Stores simplified map (embeddings/
 
 # Paths
 source_path: str | None = None
+source_paths: tuple = ()          # all source photos (same person); live mode averages their embeddings
 target_path: str | None = None
 output_path: str | None = None
 

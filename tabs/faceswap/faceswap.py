@@ -46,7 +46,7 @@ DET_SIZES = [160, 320, 640]
 PREVIEW_WIDTH = 640
 
 DEFAULTS = {
-    "source_path": "",
+    "source_paths": [],
     "camera": "",
     "resolution": "1280x720",
     "virtual_camera": True,
@@ -54,6 +54,7 @@ DEFAULTS = {
     "enhancer": "none",
     "det_size": 320,
     "mouth_mask": 0,
+    "sharpness": 0.0,
     "color_correction": False,
     "many_faces": False,
     "mirror": False,
@@ -113,6 +114,9 @@ def load_settings():
             settings.update(json.load(f).get("faceswap", {}))
     except (OSError, ValueError):
         pass
+    if not settings["source_paths"] and settings.get("source_path"):
+        settings["source_paths"] = [settings["source_path"]]  # pre-multi-photo settings
+    settings.pop("source_path", None)
     return settings
 
 
@@ -133,16 +137,31 @@ def save_settings(values):
 # ─── session control ─────────────────────────────────────────────────────
 
 
-def _live_config(source, swap_model, enhancer, det_size, mouth_mask,
+def _source_paths(gallery):
+    """File paths from the source gallery value (items may be (path, caption))."""
+    paths = []
+    for item in gallery or []:
+        path = item[0] if isinstance(item, (list, tuple)) else item
+        if isinstance(path, dict):
+            path = path.get("path") or path.get("name")
+        if path and os.path.isfile(path):
+            paths.append(path)
+    return paths
+
+
+def _live_config(sources, swap_model, enhancer, det_size, mouth_mask, sharpness,
                  color_correction, many_faces, mirror, async_swap, show_fps):
     dlc = _dlc()
+    paths = _source_paths(sources)
     return dlc.LiveConfig(
-        source_path=source or None,
+        source_path=paths[0] if paths else None,
+        source_paths=paths[1:],
         swap_model=swap_model,
         enhancer=None if enhancer == "none" else enhancer,
         execution_providers=[dlc.suggest_default_execution_provider()],
         det_size=int(det_size),
         mouth_mask=float(mouth_mask),
+        sharpness=float(sharpness),
         color_correction=bool(color_correction),
         many_faces=bool(many_faces),
         mirror=bool(mirror),
@@ -162,8 +181,8 @@ def _stop_session():
 def start_live(source, camera, resolution, virtual_camera, *quality):
     """Generator: (status, timer) updates while models load and the camera starts."""
     global _SESSION, _VCAM
-    if not source or not os.path.isfile(source):
-        raise gr.Error(i18n("Choose a source face image first."))
+    if not _source_paths(source):
+        raise gr.Error(i18n("Add at least one source face photo first."))
     if not camera:
         raise gr.Error(i18n("No camera selected."))
     _stop_session()
@@ -189,10 +208,10 @@ def start_live(source, camera, resolution, virtual_camera, *quality):
         _SESSION, _VCAM = session, vcam
 
     save_settings(dict(zip(
-        ["source_path", "camera", "resolution", "virtual_camera", "swap_model", "enhancer",
-         "det_size", "mouth_mask", "color_correction", "many_faces", "mirror",
+        ["source_paths", "camera", "resolution", "virtual_camera", "swap_model", "enhancer",
+         "det_size", "mouth_mask", "sharpness", "color_correction", "many_faces", "mirror",
          "async_swap", "show_fps"],
-        [source, camera, resolution, bool(virtual_camera), *quality],
+        [_source_paths(source), camera, resolution, bool(virtual_camera), *quality],
     )))
     yield _status_text(), gr.Timer(active=True)
 
@@ -264,13 +283,15 @@ def faceswap_tab():
     cameras = camera_choices()
     camera_values = [value for _label, value in cameras]
     saved_camera = saved["camera"] if saved["camera"] in camera_values else (camera_values[0] if camera_values else None)
-    saved_source = saved["source_path"] if saved["source_path"] and os.path.isfile(saved["source_path"]) else None
+    saved_sources = [p for p in saved["source_paths"] if os.path.isfile(p)] or None
 
     with gr.Blocks():
         with gr.Row(equal_height=False):
             with gr.Column(scale=1, min_width=320):
-                with step_card(1, "Source Face", i18n, description="The face to wear. A sharp, front-facing photo with eyes open and mouth closed works best."):
-                    source = gr.Image(label=i18n("Source face"), type="filepath", value=saved_source, height=260, sources=["upload"])
+                with step_card(1, "Source Face", i18n, description="Photos of the face to wear, all of the same person. 3-5 sharp, front-facing shots (eyes open, mouth closed) give a steadier likeness than one."):
+                    source = gr.Gallery(label=i18n("Source face photos"), type="filepath", value=saved_sources,
+                                        interactive=True, columns=2, height=300, object_fit="cover",
+                                        allow_preview=False, preview=False)
 
                 with step_card(2, "Camera & Output", i18n, description="Pick your camera. Virtual camera output lets Zoom, Meet, WhatsApp, etc. use the result."):
                     with gr.Row():
@@ -289,6 +310,8 @@ def faceswap_tab():
                                            info=i18n("Lower is faster; 320 is plenty at webcam distance."))
                     mouth_mask = gr.Slider(label=i18n("Mouth mask"), minimum=0, maximum=100, step=1, value=saved["mouth_mask"],
                                            info=i18n("Keep your real mouth for natural speech. 0 = off."))
+                    sharpness = gr.Slider(label=i18n("Sharpness"), minimum=0, maximum=1, step=0.05, value=saved["sharpness"],
+                                          info=i18n("Sharpen the swapped face. Nearly free; try 0.2-0.4."))
                     with gr.Row():
                         color_correction = gr.Checkbox(label=i18n("Color correction"), value=saved["color_correction"])
                         many_faces = gr.Checkbox(label=i18n("All faces"), value=saved["many_faces"])
@@ -306,7 +329,7 @@ def faceswap_tab():
                 status = gr.Textbox(label=i18n("Status"), value=i18n("Stopped."), interactive=False)
 
         timer = gr.Timer(0.2, active=False)
-        quality = [swap_model, enhancer, det_size, mouth_mask, color_correction, many_faces, mirror, async_swap, show_fps]
+        quality = [swap_model, enhancer, det_size, mouth_mask, sharpness, color_correction, many_faces, mirror, async_swap, show_fps]
 
         refresh.click(lambda: gr.Dropdown(choices=camera_choices()), outputs=camera)
         start.click(start_live, inputs=[source, camera, resolution, virtual_camera, *quality], outputs=[status, timer])
