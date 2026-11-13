@@ -52,6 +52,13 @@ def _build_face_analysis(providers) -> Any:
     unused models and the cached ``det_10g_coreml*`` copies, which on CoreML
     means several wasted compiles at startup.
     """
+    import onnxruntime
+
+    # FaceAnalysis.__init__ (bypassed here) silences ORT warnings. Keep that:
+    # det_10g run below its 640px export size logs nine output-shape
+    # warnings per call otherwise, which more than doubled detection time
+    # on CUDA (8.7 ms vs 4.0 ms on an RTX 4060).
+    onnxruntime.set_default_logger_severity(3)
     model_dir = os.path.join(os.path.expanduser("~"), ".insightface", "models", "buffalo_l")
     analyser = insightface.app.FaceAnalysis.__new__(insightface.app.FaceAnalysis)
     analyser.model_dir = model_dir
