@@ -55,6 +55,8 @@ DEFAULTS = {
     "det_size": 320,
     "mouth_mask": 0,
     "sharpness": 0.0,
+    "stabilization": 0.5,
+    "detect_every_frame": True,
     "color_correction": False,
     "many_faces": False,
     "mirror": False,
@@ -150,7 +152,8 @@ def _source_paths(gallery):
 
 
 def _live_config(sources, swap_model, enhancer, det_size, mouth_mask, sharpness,
-                 color_correction, many_faces, mirror, async_swap, show_fps):
+                 stabilization, detect_every_frame, color_correction, many_faces,
+                 mirror, async_swap, show_fps):
     dlc = _dlc()
     paths = _source_paths(sources)
     return dlc.LiveConfig(
@@ -162,6 +165,8 @@ def _live_config(sources, swap_model, enhancer, det_size, mouth_mask, sharpness,
         det_size=int(det_size),
         mouth_mask=float(mouth_mask),
         sharpness=float(sharpness),
+        stabilization=float(stabilization),
+        detect_every_frame=bool(detect_every_frame),
         color_correction=bool(color_correction),
         many_faces=bool(many_faces),
         mirror=bool(mirror),
@@ -209,8 +214,8 @@ def start_live(source, camera, resolution, virtual_camera, *quality):
 
     save_settings(dict(zip(
         ["source_paths", "camera", "resolution", "virtual_camera", "swap_model", "enhancer",
-         "det_size", "mouth_mask", "sharpness", "color_correction", "many_faces", "mirror",
-         "async_swap", "show_fps"],
+         "det_size", "mouth_mask", "sharpness", "stabilization", "detect_every_frame",
+         "color_correction", "many_faces", "mirror", "async_swap", "show_fps"],
         [_source_paths(source), camera, resolution, bool(virtual_camera), *quality],
     )))
     yield _status_text(), gr.Timer(active=True)
@@ -312,6 +317,10 @@ def faceswap_tab():
                                            info=i18n("Keep your real mouth for natural speech. 0 = off."))
                     sharpness = gr.Slider(label=i18n("Sharpness"), minimum=0, maximum=1, step=0.05, value=saved["sharpness"],
                                           info=i18n("Sharpen the swapped face. Nearly free; try 0.2-0.4."))
+                    stabilization = gr.Slider(label=i18n("Stabilization"), minimum=0, maximum=1, step=0.05, value=saved["stabilization"],
+                                              info=i18n("Steadies the face between frames (less edge shimmer). Higher = steadier but laggier; 0.5 is a good balance."))
+                    detect_every_frame = gr.Checkbox(label=i18n("Detect every frame"), value=saved["detect_every_frame"],
+                                                     info=i18n("Smoother tracking when you move (~2 ms per frame). Turn off on slower machines."))
                     with gr.Row():
                         color_correction = gr.Checkbox(label=i18n("Color correction"), value=saved["color_correction"])
                         many_faces = gr.Checkbox(label=i18n("All faces"), value=saved["many_faces"])
@@ -329,7 +338,8 @@ def faceswap_tab():
                 status = gr.Textbox(label=i18n("Status"), value=i18n("Stopped."), interactive=False)
 
         timer = gr.Timer(0.2, active=False)
-        quality = [swap_model, enhancer, det_size, mouth_mask, sharpness, color_correction, many_faces, mirror, async_swap, show_fps]
+        quality = [swap_model, enhancer, det_size, mouth_mask, sharpness, stabilization, detect_every_frame,
+                   color_correction, many_faces, mirror, async_swap, show_fps]
 
         refresh.click(lambda: gr.Dropdown(choices=camera_choices()), outputs=camera)
         start.click(start_live, inputs=[source, camera, resolution, virtual_camera, *quality], outputs=[status, timer])

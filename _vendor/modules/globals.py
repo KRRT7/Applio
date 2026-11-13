@@ -43,6 +43,8 @@ video_quality: int | None = None # Typically a CRF value or bitrate
 live_mirror: bool = False
 show_fps: bool = False
 live_async_swap: bool = False    # Run the swap model off the live loop (see AsyncLiveSwapper)
+live_stabilization: float = 0.0  # 0 = off .. 1 = strongest landmark smoothing (see live.LandmarkSmoother)
+live_detect_every_frame: bool = False  # detect on every live frame instead of every few
 
 # System Configuration
 max_memory: int | None = None        # Memory limit in GB? (Needs clarification)

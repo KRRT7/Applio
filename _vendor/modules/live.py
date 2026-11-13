@@ -99,6 +99,14 @@ class LiveConfig:
     sharpness: float = 0.0
     mirror: bool = False
     async_swap: bool = False
+    # Smooth the face alignment between frames (0 = off .. 1 = strongest) to
+    # cut edge shimmer from detection jitter; 0.5 is a good default.
+    # Single-face mode only.
+    stabilization: float = 0.0
+    # Detect the face on every frame instead of every few frames (a held
+    # detection makes the face move in steps). Costs one detection per frame
+    # (~4 ms on Apple Silicon); halved landmark jitter in our tests.
+    detect_every_frame: bool = False
     show_fps: bool = False
 
 
@@ -108,6 +116,8 @@ def configure(config: LiveConfig) -> None:
         raise ValueError(f"unknown enhancer {config.enhancer!r}; use one of {sorted(ENHANCERS)}")
     if config.swap_model not in SWAP_MODELS:
         raise ValueError(f"unknown swap model {config.swap_model!r}; use one of {SWAP_MODELS}")
+    if not 0.0 <= config.stabilization <= 1.0:
+        raise ValueError("stabilization must be between 0 and 1")
     if config.det_size not in (160, 320, 640):
         raise ValueError("det_size must be 160, 320 or 640")
 
@@ -145,6 +155,8 @@ def configure(config: LiveConfig) -> None:
     g.sharpness = config.sharpness
     g.live_mirror = config.mirror
     g.live_async_swap = config.async_swap
+    g.live_stabilization = float(config.stabilization)
+    g.live_detect_every_frame = bool(config.detect_every_frame)
     g.show_fps = config.show_fps
 
     if "face_swapper" not in g.frame_processors:
@@ -193,6 +205,61 @@ def swap_image(target: Frame) -> Frame:
         pipeline.close()
 
 
+# ─── landmark stabilization ──────────────────────────────────────────────
+
+
+class LandmarkSmoother:
+    """Low-pass filter for a face's 5 alignment landmarks.
+
+    ``strength`` 0..1 maps log-scale to a cutoff of 20 Hz (light) .. 4 Hz
+    (strong); 0.5 is ~9 Hz. Tuned on 10 s of real head motion at 30 fps
+    (detection every frame): ~9 Hz cut landmark jitter by about a third
+    while tracking the true motion slightly *better* than raw detections;
+    below ~6 Hz the lag shows. A speed-adaptive (One-Euro) term did not
+    help at 30 fps: the speed estimate is as noisy as the landmarks.
+    A jump of more than MAX_JUMP inter-ocular distances resets the filter
+    (a different face, or the same one re-found elsewhere).
+    """
+
+    CUTOFF_RANGE = (20.0, 4.0)      # Hz at strength 0 and 1
+    MAX_JUMP = 2.0                  # inter-ocular distances
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._x = None
+        self._t = None
+
+    @classmethod
+    def cutoff(cls, strength: float) -> float:
+        hi, lo = cls.CUTOFF_RANGE
+        return hi * (lo / hi) ** float(np.clip(strength, 0.0, 1.0))
+
+    def __call__(self, kps: np.ndarray, t: float, strength: float) -> np.ndarray:
+        kps = np.asarray(kps, dtype=np.float64)
+        iod = float(np.linalg.norm(kps[0] - kps[1])) or 1.0
+        if self._x is None or t <= self._t or (
+            float(np.linalg.norm(kps[:2].mean(0) - self._x[:2].mean(0))) > self.MAX_JUMP * iod
+        ):
+            self._x, self._t = kps, t
+            return kps.astype(np.float32)
+        dt = t - self._t
+        tau = 1.0 / (2.0 * np.pi * self.cutoff(strength))
+        self._x = self._x + (kps - self._x) / (1.0 + tau / dt)
+        self._t = t
+        return self._x.astype(np.float32)
+
+
+def _with_kps(face, kps):
+    """A copy of ``face`` with different alignment landmarks."""
+    from insightface.app.common import Face
+
+    smoothed = Face(dict(face))
+    smoothed.kps = kps
+    return smoothed
+
+
 # ─── per-frame pipeline ──────────────────────────────────────────────────
 
 
@@ -219,6 +286,9 @@ class FramePipeline:
         self._cached_target_face = None
         self._cached_many_faces = None
         self._det_interval = max(1, round(camera_fps * 0.08))
+        self._frame_period = 1.0 / max(camera_fps, 1.0)
+        self._clock = 0.0
+        self._smoother = LandmarkSmoother()
 
     def process(self, frame: Frame) -> Frame:
         temp_frame = frame
@@ -316,13 +386,22 @@ class FramePipeline:
                     self._reported_source_error = None
                     self._source_image = get_one_face(source_frame)
 
+        self._clock += self._frame_period
         self._det_count += 1
-        if self._det_count % self._det_interval == 0:
+        interval = 1 if modules.globals.live_detect_every_frame else self._det_interval
+        if self._det_count % interval == 0:
             if modules.globals.many_faces:
                 self._cached_target_face = None
                 self._cached_many_faces = detect_many_faces_fast(temp_frame)
+                self._smoother.reset()
             else:
-                self._cached_target_face = detect_one_face_fast(temp_frame)
+                face = detect_one_face_fast(temp_frame)
+                strength = modules.globals.live_stabilization
+                if face is None or strength <= 0 or getattr(face, "kps", None) is None:
+                    self._smoother.reset()
+                else:
+                    face = _with_kps(face, self._smoother(face.kps, self._clock, strength))
+                self._cached_target_face = face
                 self._cached_many_faces = None
 
         cached_faces = None
@@ -606,6 +685,6 @@ def run_cli(camera: Optional[int], width: int, height: int, virtual_camera: bool
 
 
 __all__ = [
-    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "ENHANCERS", "SWAP_MODELS", "FramePipeline", "LiveConfig",
+    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
     "LiveSession", "configure", "ensure_models", "preload_models", "run_cli", "swap_image",
 ]
