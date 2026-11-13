@@ -439,6 +439,7 @@ def load_realtime_settings():
         "index_rate": 0.0,
         "volume_envelope": 1.0,
         "protect": 0.33,
+        "f0_method": "fcpe",
         "terms_accepted": False,
     }
     try:
@@ -604,6 +605,7 @@ def start_realtime(
         cross_fade_overlap_size=cross_fade_overlap_size,
         extra_convert_size=extra_convert_size,
         silent_threshold=silent_threshold,
+        f0_method=f0_method,
         pitch=pitch,
         index_rate=index_rate,
         volume_envelope=volume_envelope,
@@ -1299,7 +1301,11 @@ def realtime_tab():
                     f0_method = gr.Dropdown(
                         filterable=False,
                         choices=["rmvpe", "fcpe", "crepe", "swift"],
-                        value="fcpe",
+                        value=(
+                            saved_settings["f0_method"]
+                            if saved_settings["f0_method"] in ("rmvpe", "fcpe", "crepe", "swift")
+                            else "fcpe"
+                        ),
                         label=i18n("Pitch extraction algorithm"),
                         info=i18n(
                             "Pitch extraction algorithm to use for the audio conversion. The default algorithm is rmvpe, which is recommended for most cases."
