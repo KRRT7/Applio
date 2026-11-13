@@ -20,14 +20,12 @@ _ROOT = Path(__file__).resolve().parent / "ui"
 
 # Navigation follows the app, exposing the tools available in the Gradio engine.
 SECTIONS = (
-    ("Voice", (("realtime", "Realtime"),)),
-    ("Video", (("faceswap", "Face Swap"),)),
+    ("Live", (("live", "Live"),)),
     ("System", (("settings", "Settings"),)),
 )
 
 DESCRIPTIONS = {
-    "realtime": "Transform your voice live with microphone input and realtime controls.",
-    "faceswap": "Swap a face into your camera live and send it to a virtual camera.",
+    "live": "Swap your face and voice live, and send them to a virtual camera and microphone.",
     "settings": "Configure your engine, audio devices and preferences.",
 }
 
@@ -136,12 +134,12 @@ def build_workspace(builders, translate=lambda text: text):
                         for key, label in items:
                             nav[key] = gr.Button(
                                 translate(label),
-                                variant="primary" if key == "realtime" else "secondary",
+                                variant="primary" if key == entries[0][0] else "secondary",
                                 elem_classes=["applio-nav-item", f"applio-nav-{key}"],
                             )
 
         with gr.Column(elem_id="applio-content", min_width=0):
-            with gr.Tabs(selected="realtime", elem_id="applio-pages") as pages:
+            with gr.Tabs(selected=entries[0][0], elem_id="applio-pages") as pages:
                 for key, title in entries:
                     with gr.Tab(title, id=key, elem_id=f"applio-page-{key}", elem_classes="applio-page"):
                         page_header(key, title, translate)

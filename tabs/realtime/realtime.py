@@ -336,7 +336,7 @@ interactive_false = gr.update(interactive=False, visible=False)
 interactive_visible = gr.update(interactive=False, visible=True)
 running, callbacks, audio_manager = False, None, None
 
-# Filled by realtime_tab() so other tabs (Face Swap's "Start face + voice")
+# Filled by realtime_tab() so the Live page
 # can start/stop voice conversion with this tab's own controls and handlers.
 SESSION_CONTROLS = {}
 
@@ -1044,7 +1044,14 @@ def soundfile_record_audio(
     return "Start", None
 
 
-def realtime_tab():
+def realtime_tab(embedded=False):
+    """Build the realtime voice settings and controls.
+
+    embedded=True is for the combined Live page: its Start/Stop and status
+    live there, so this tab's own Start/Stop and status box are hidden
+    (except in client mode, where voice is started from the browser).
+    """
+    hide_controls = embedded and not client_mode
     input_devices, output_devices = [], []
     saved_settings = load_realtime_settings()
 
@@ -1503,7 +1510,16 @@ def realtime_tab():
                         ),
                         interactive=True,
                     )
-        with step_card(5, "Start Realtime", i18n, description="Agree to the terms and start or stop the live session."):
+        with step_card(
+            5,
+            "Terms of Use" if hide_controls else "Start Realtime",
+            i18n,
+            description=(
+                "Agree to the terms before starting voice with the Live controls."
+                if hide_controls
+                else "Agree to the terms and start or stop the live session."
+            ),
+        ):
             terms_checkbox = gr.Checkbox(
                 label=i18n("I agree to the terms of use"),
                 info=i18n(
@@ -1513,12 +1529,13 @@ def realtime_tab():
                 interactive=True,
             )
             with gr.Row():
-                start_button = gr.Button(i18n("Start"), variant="primary")
+                start_button = gr.Button(i18n("Start"), variant="primary", visible=not hide_controls)
                 stop_button = gr.Button(i18n("Stop"), interactive=False, visible=False)
             latency_info = gr.Label(
                 label=i18n("Status"),
                 value=i18n("Realtime not started."),
                 elem_id="realtime-status-info",
+                visible=not hide_controls,
             )
 
         json_audio_hidden = gr.JSON(visible=False)
