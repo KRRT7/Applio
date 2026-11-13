@@ -45,11 +45,27 @@ build = [
 ui = [
     "gradio==6.20.0",
 ]
+# Live face swap (Face Swap tab). Deep-Live-Cam itself is vendored in
+# _vendor/ (see _vendor/README.md); these are its runtime dependencies.
+faceswap = [
+    "insightface==0.7.3",
+    "opencv-python-headless==4.14.0.94",
+    "cv2-enumerate-cameras==1.4.0",
+    "pyvirtualcam==0.15.0",
+    "scikit-learn==1.9.1",
+    "pillow==12.3.0",
+    "certifi==2026.10.23",
+    "protobuf==7.36.2",
+    "pygrabber==0.2; sys_platform == 'win32'",
+]
+dev = [
+    "pytest==9.2.0",
+]
 
 [tool.uv]
 # Applio runs from the source tree (app.py / core.py); it is not an installable package.
 package = false
-default-groups = ["ui"]
+default-groups = ["ui", "faceswap"]
 # Resolve each OS separately: Windows pins its own CUDA runtime wheels for onnxruntime-gpu.
 environments = [
     "sys_platform == 'win32'",

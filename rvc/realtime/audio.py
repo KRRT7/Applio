@@ -170,6 +170,41 @@ class Audio:
         self.proposed_pitch = proposed_pitch
         self.proposed_pitch_threshold = proposed_pitch_threshold
 
+    # ── live diagnostics (read by the UI; written from audio callbacks) ──
+
+    def _reset_stats(self):
+        self.input_db = float("-inf")    # mic level after input gain, per block
+        self.output_db = float("-inf")   # converted voice level, per block
+        self.blocks = 0                  # blocks processed
+        self.overruns = 0                # blocks whose processing took longer than the block
+        self.input_overflows = 0         # driver: input samples lost
+        self.output_underflows = 0       # driver: output ran dry (audible dropouts)
+        self.callback_errors = 0
+        self.last_error = None
+        self.block_ms = getattr(self, "block_ms", None)
+
+    @staticmethod
+    def _db(samples) -> float:
+        rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float32)))) if len(samples) else 0.0
+        return 20.0 * np.log10(rms) if rms > 1e-9 else float("-inf")
+
+    def _note_status(self, status):
+        if status:
+            if status.input_overflow:
+                self.input_overflows += 1
+            if status.output_underflow:
+                self.output_underflows += 1
+
+    def stats(self) -> dict:
+        """Snapshot of the live audio diagnostics."""
+        return {
+            "input_db": self.input_db, "output_db": self.output_db,
+            "latency_ms": getattr(self, "latency", None), "block_ms": self.block_ms,
+            "blocks": self.blocks, "overruns": self.overruns,
+            "input_overflows": self.input_overflows, "output_underflows": self.output_underflows,
+            "callback_errors": self.callback_errors, "last_error": self.last_error,
+        }
+
     def get_input_audio_device(self, index: int):
         audioinput, _ = list_audio_device()
         serverAudioDevice = [x for x in audioinput if x.index == index]
@@ -199,10 +234,17 @@ class Audio:
         )
 
     def process_data_with_time(self, indata: np.ndarray):
+        if not hasattr(self, "blocks"):
+            self._reset_stats()
+        self.input_db = self._db(indata * self.input_audio_gain)
         out_wav, vol, performance_ms = self.process_data(indata)
         # print(f"real-time voice conversion performance: {performance_ms:.2f} ms")
         self.latency = performance_ms  # latency to display on the application interface
         self.volume = vol
+        self.output_db = self._db(out_wav)
+        self.blocks += 1
+        if self.block_ms and performance_ms > self.block_ms:
+            self.overruns += 1
 
         return out_wav
 
@@ -211,6 +253,7 @@ class Audio:
     ):
         if not self.running:
             return
+        self._note_status(status)
         try:
             out_wav = self.process_data_with_time(indata)
 
@@ -218,6 +261,8 @@ class Audio:
             if self.use_monitor:
                 queue_latest(self.mon_queue, out_wav)
         except Exception as error:
+            self.callback_errors = getattr(self, "callback_errors", 0) + 1
+            self.last_error = f"{type(error).__name__}: {error}"
             print(f"An error occurred while running the audio stream: {error}")
             print(traceback.format_exc())
 
@@ -227,6 +272,7 @@ class Audio:
         if not self.running:
             outdata.fill(0)
             return
+        self._note_status(status)
         try:
             out_wav = self.process_data_with_time(indata)
 
@@ -239,6 +285,8 @@ class Audio:
                 * self.output_audio_gain
             )
         except Exception as error:
+            self.callback_errors = getattr(self, "callback_errors", 0) + 1
+            self.last_error = f"{type(error).__name__}: {error}"
             print(f"An error occurred while running the audio stream: {error}")
             print(traceback.format_exc())
 
@@ -281,6 +329,8 @@ class Audio:
         output_monitor_extra_setting,
         audio_sample_rate: int,
     ):
+        self._reset_stats()
+        self.block_ms = block_frame / float(audio_sample_rate) * 1000.0
         use_asio = isinstance(input_extra_setting, sd.AsioSettings) or isinstance(
             output_extra_setting, sd.AsioSettings
         )
@@ -304,8 +354,9 @@ class Audio:
                 extra_settings=input_extra_setting,
             )
             self.output_stream = sd.OutputStream(
-                callback=lambda outdata, frames, times, status: self.audio_queue(
-                    self.out_queue, outdata, self.output_audio_gain
+                callback=lambda outdata, frames, times, status: (
+                    self._note_status(status),
+                    self.audio_queue(self.out_queue, outdata, self.output_audio_gain),
                 ),
                 latency="low",
                 dtype=np.float32,

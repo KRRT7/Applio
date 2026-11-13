@@ -335,8 +335,55 @@ interactive_true = gr.update(interactive=True, visible=True)
 interactive_false = gr.update(interactive=False, visible=False)
 interactive_visible = gr.update(interactive=False, visible=True)
 running, callbacks, audio_manager = False, None, None
-callbacks_kwargs = {}
 
+# Filled by realtime_tab() so the Live page
+# can start/stop voice conversion with this tab's own controls and handlers.
+SESSION_CONTROLS = {}
+
+
+def voice_stats():
+    """Live audio diagnostics from the running stream, or None."""
+    am = audio_manager
+    if not running or am is None or not hasattr(am, "stats"):
+        return None
+    return am.stats()
+
+
+def _level(db):
+    """'-32 dB ▮▮▮▮▯▯' style meter over -60..0 dB."""
+    if db is None or db == float("-inf"):
+        return "silent ▯▯▯▯▯▯"
+    filled = int(round(max(0.0, min(1.0, (db + 60.0) / 60.0)) * 6))
+    return f"{db:.0f} dB " + "▮" * filled + "▯" * (6 - filled)
+
+
+def voice_status():
+    """Short live status of realtime voice conversion, or None when it is off."""
+    am, cb = audio_manager, callbacks
+    if not running or cb is None:
+        return None
+    if am is None or not getattr(getattr(cb, "vc", None), "ready", False):
+        return i18n("loading voice model")
+    warmup = getattr(getattr(cb.vc, "vc_model", None), "warmup_blocks", 0)
+    if warmup:
+        return i18n("voice warming up")
+    st = voice_stats()
+    if not st or not st["blocks"]:
+        return i18n("voice on (waiting for audio)")
+    # latency_ms is per-block processing time, not end-to-end delay (that is
+    # dominated by the chunk size).
+    budget = f"{st['latency_ms']:.0f}/{st['block_ms']:.0f} ms per block" if st["block_ms"] else f"{st['latency_ms']:.0f} ms/block"
+    return " · ".join([
+        "voice on",
+        f"mic {_level(st['input_db'])}",
+        f"out {_level(st['output_db'])}",
+        budget,
+        f"overruns {st['overruns']}",
+        f"dropouts {st['output_underflows']}",
+    ])
+
+
+callbacks_kwargs = {}
 CONFIG_PATH = os.path.join(now_dir, "assets", "config.json")
 
 
@@ -419,6 +466,7 @@ def load_realtime_settings():
         "index_rate": 0.0,
         "volume_envelope": 1.0,
         "protect": 0.33,
+        "f0_method": "fcpe",
         "terms_accepted": False,
     }
     try:
@@ -584,6 +632,7 @@ def start_realtime(
         cross_fade_overlap_size=cross_fade_overlap_size,
         extra_convert_size=extra_convert_size,
         silent_threshold=silent_threshold,
+        f0_method=f0_method,
         pitch=pitch,
         index_rate=index_rate,
         volume_envelope=volume_envelope,
@@ -995,7 +1044,14 @@ def soundfile_record_audio(
     return "Start", None
 
 
-def realtime_tab():
+def realtime_tab(embedded=False):
+    """Build the realtime voice settings and controls.
+
+    embedded=True is for the combined Live page: its Start/Stop and status
+    live there, so this tab's own Start/Stop and status box are hidden
+    (except in client mode, where voice is started from the browser).
+    """
+    hide_controls = embedded and not client_mode
     input_devices, output_devices = [], []
     saved_settings = load_realtime_settings()
 
@@ -1279,7 +1335,11 @@ def realtime_tab():
                     f0_method = gr.Dropdown(
                         filterable=False,
                         choices=["rmvpe", "fcpe", "crepe", "swift"],
-                        value="fcpe",
+                        value=(
+                            saved_settings["f0_method"]
+                            if saved_settings["f0_method"] in ("rmvpe", "fcpe", "crepe", "swift")
+                            else "fcpe"
+                        ),
                         label=i18n("Pitch extraction algorithm"),
                         info=i18n(
                             "Pitch extraction algorithm to use for the audio conversion. The default algorithm is rmvpe, which is recommended for most cases."
@@ -1450,7 +1510,16 @@ def realtime_tab():
                         ),
                         interactive=True,
                     )
-        with step_card(5, "Start Realtime", i18n, description="Agree to the terms and start or stop the live session."):
+        with step_card(
+            5,
+            "Terms of Use" if hide_controls else "Start Realtime",
+            i18n,
+            description=(
+                "Agree to the terms before starting voice with the Live controls."
+                if hide_controls
+                else "Agree to the terms and start or stop the live session."
+            ),
+        ):
             terms_checkbox = gr.Checkbox(
                 label=i18n("I agree to the terms of use"),
                 info=i18n(
@@ -1460,12 +1529,13 @@ def realtime_tab():
                 interactive=True,
             )
             with gr.Row():
-                start_button = gr.Button(i18n("Start"), variant="primary")
+                start_button = gr.Button(i18n("Start"), variant="primary", visible=not hide_controls)
                 stop_button = gr.Button(i18n("Stop"), interactive=False, visible=False)
             latency_info = gr.Label(
                 label=i18n("Status"),
                 value=i18n("Realtime not started."),
                 elem_id="realtime-status-info",
+                visible=not hide_controls,
             )
 
         json_audio_hidden = gr.JSON(visible=False)
@@ -1755,9 +1825,7 @@ def realtime_tab():
                 outputs=[json_value_hidden],
             )
         else:
-            start_button.click(
-                fn=_realtime_with_toast,
-                inputs=[
+            start_inputs = [
                     terms_checkbox,
                     input_audio_device,
                     input_audio_gain,
@@ -1793,12 +1861,29 @@ def realtime_tab():
                     formant_shifting,
                     formant_qfrency,
                     formant_timbre,
-                ],
+                ]
+            start_button.click(
+                fn=_realtime_with_toast,
+                inputs=start_inputs,
                 outputs=[latency_info, start_button, stop_button],
             )
 
             stop_button.click(
                 fn=stop_realtime, outputs=[latency_info, start_button, stop_button]
+            )
+            SESSION_CONTROLS.update(
+                start_fn=_realtime_with_toast,
+                start_inputs=start_inputs,
+                stop_fn=stop_realtime,
+                outputs=[latency_info, start_button, stop_button],
+                timing_inputs=[chunk_size, cross_fade_overlap_size],
+                # The per-person voice settings a Live profile saves/loads.
+                profile_inputs={
+                    "model_file": model_file, "index_file": index_file, "pitch": pitch,
+                    "index_rate": index_rate, "protect": protect, "f0_method": f0_method,
+                },
+                list_models=lambda: sorted(get_files("model")),
+                list_indexes=lambda: sorted(get_files("index")),
             )  # .then(
             #     fn=lambda: (
             #         yield gr.update(value="Stopped"),

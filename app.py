@@ -112,7 +112,7 @@ import rvc.lib.zluda
 # Import Tabs
 from assets.app_shell import build_workspace, create_theme, stylesheet
 from tabs.settings.settings import settings_tab
-from tabs.realtime.realtime import realtime_tab
+from tabs.faceswap.faceswap import live_tab
 
 # Run prerequisites
 from core import run_prerequisites_script
@@ -167,7 +167,7 @@ with gr.Blocks(
 ) as Applio:
     build_workspace(
         {
-            "realtime": realtime_tab,
+            "live": live_tab,
             "settings": settings_tab,
         },
         i18n,
