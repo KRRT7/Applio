@@ -29,7 +29,7 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
 
 def slug(name):
-    """Folder name for a profile name ("Paloma Martínez" -> "paloma_martínez")."""
+    """Folder name for a profile name ("Ana María" -> "ana_maría")."""
     s = re.sub(r"[^\w\- ]", "", str(name or ""), flags=re.UNICODE).strip().lower()
     return re.sub(r"\s+", "_", s)
 
