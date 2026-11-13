@@ -268,12 +268,26 @@ def _with_kps(face, kps):
 # ─── per-frame pipeline ──────────────────────────────────────────────────
 
 
+@dataclass
+class Detection:
+    """One frame after FramePipeline.detect(), ready for render()."""
+
+    frame: Frame
+    target_face: object = None            # single-face mode
+    many_faces: Optional[list] = None     # many-faces mode
+    mapped: bool = False                  # map-faces mode: render() does its own detection
+
+
 class FramePipeline:
     """Runs detect -> swap -> enhance on successive frames of one stream.
 
     Holds the per-stream state: the loaded source face, cached detections
     (detection runs every few frames), the async swapper and an FPS counter.
-    Not thread-safe; use one per stream.
+
+    ``process(frame)`` is ``render(detect(frame))``. The two stages share no
+    state, so LiveSession runs them on separate threads: one frame is swapped
+    while the next is detected. Each stage on its own is not thread-safe;
+    call detect() from one thread and render() from one thread.
     """
 
     def __init__(self, camera_fps: float = 30.0):
@@ -296,14 +310,52 @@ class FramePipeline:
         self._smoother = LandmarkSmoother()
 
     def process(self, frame: Frame) -> Frame:
+        return self.render(self.detect(frame))
+
+    def detect(self, frame: Frame) -> Detection:
+        """Mirror the frame and find the face(s) to swap in it."""
         temp_frame = frame
         if modules.globals.live_mirror:
             temp_frame = gpu_flip(temp_frame, 1)
+        if modules.globals.map_faces:
+            # Single-face state goes stale while map-faces runs: resume from
+            # a fresh detection afterwards.
+            self._cached_target_face = None
+            self._cached_many_faces = None
+            return Detection(temp_frame, mapped=True)
 
-        if not modules.globals.map_faces:
-            temp_frame = self._process_single_or_many(temp_frame)
+        self._clock += self._frame_period
+        self._det_count += 1
+        interval = 1 if modules.globals.live_detect_every_frame else self._det_interval
+        if self._det_count % interval == 0:
+            if modules.globals.many_faces:
+                self._cached_target_face = None
+                self._cached_many_faces = detect_many_faces_fast(temp_frame)
+                self._smoother.reset()
+            else:
+                face = detect_one_face_fast(temp_frame)
+                strength = modules.globals.live_stabilization
+                if face is None or strength <= 0 or getattr(face, "kps", None) is None:
+                    self._smoother.reset()
+                else:
+                    face = _with_kps(face, self._smoother(face.kps, self._clock, strength))
+                self._cached_target_face = face
+                self._cached_many_faces = None
+
+        det = Detection(temp_frame, self._cached_target_face, self._cached_many_faces or None)
+        # Fast detection skips the 2d106 landmark model, but the mouth mask
+        # needs it. Attach landmarks on demand.
+        faces = det.many_faces or ([det.target_face] if det.target_face is not None else None)
+        if modules.globals.mouth_mask and faces:
+            ensure_landmarks(temp_frame, faces)
+        return det
+
+    def render(self, det: Detection) -> Frame:
+        """Swap and enhance the detected face(s); count FPS."""
+        if det.mapped:
+            temp_frame = self._process_mapped(det.frame)
         else:
-            temp_frame = self._process_mapped(temp_frame)
+            temp_frame = self._render_single_or_many(det)
 
         current_time = time.time()
         self._frame_count += 1
@@ -353,7 +405,8 @@ class FramePipeline:
         averaged.embedding = (mean / np.linalg.norm(mean)).astype(np.float32)
         return averaged
 
-    def _process_single_or_many(self, temp_frame: Frame) -> Frame:
+    def _render_single_or_many(self, det: Detection) -> Frame:
+        temp_frame = det.frame
         paths = tuple(modules.globals.source_paths) or (
             (modules.globals.source_path,) if modules.globals.source_path else ()
         )
@@ -391,34 +444,8 @@ class FramePipeline:
                     self._reported_source_error = None
                     self._source_image = get_one_face(source_frame)
 
-        self._clock += self._frame_period
-        self._det_count += 1
-        interval = 1 if modules.globals.live_detect_every_frame else self._det_interval
-        if self._det_count % interval == 0:
-            if modules.globals.many_faces:
-                self._cached_target_face = None
-                self._cached_many_faces = detect_many_faces_fast(temp_frame)
-                self._smoother.reset()
-            else:
-                face = detect_one_face_fast(temp_frame)
-                strength = modules.globals.live_stabilization
-                if face is None or strength <= 0 or getattr(face, "kps", None) is None:
-                    self._smoother.reset()
-                else:
-                    face = _with_kps(face, self._smoother(face.kps, self._clock, strength))
-                self._cached_target_face = face
-                self._cached_many_faces = None
-
-        cached_faces = None
-        if self._cached_many_faces:
-            cached_faces = self._cached_many_faces
-        elif self._cached_target_face is not None:
-            cached_faces = [self._cached_target_face]
-
-        # Fast detection skips the 2d106 landmark model, but the mouth mask
-        # needs it. Attach landmarks on demand.
-        if modules.globals.mouth_mask and cached_faces:
-            ensure_landmarks(temp_frame, cached_faces)
+        target_face, many = det.target_face, det.many_faces
+        cached_faces = many or ([target_face] if target_face is not None else None)
 
         source_image = self._source_image
         for fp in self._frame_processors:
@@ -433,31 +460,31 @@ class FramePipeline:
                     temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
             elif fp.NAME == "DLC.FACE-SWAPPER":
                 swapped_bboxes = []
-                if modules.globals.many_faces and self._cached_many_faces:
+                if modules.globals.many_faces and many:
                     result = temp_frame.copy()
-                    for t_face in self._cached_many_faces:
+                    for t_face in many:
                         result = fp.swap_face(source_image, t_face, result)
                         if hasattr(t_face, "bbox") and t_face.bbox is not None:
                             swapped_bboxes.append(t_face.bbox.astype(int))
                     temp_frame = result
-                elif self._cached_target_face is not None:
+                elif target_face is not None:
                     if modules.globals.live_async_swap:
                         if self._async_swapper is None:
                             self._async_swapper = fp.AsyncLiveSwapper()
                         temp_frame = self._async_swapper.swap(
-                            source_image, self._cached_target_face, temp_frame
+                            source_image, target_face, temp_frame
                         )
                     else:
-                        temp_frame = fp.swap_face(source_image, self._cached_target_face, temp_frame)
-                    if hasattr(self._cached_target_face, "bbox") and self._cached_target_face.bbox is not None:
-                        swapped_bboxes.append(self._cached_target_face.bbox.astype(int))
+                        temp_frame = fp.swap_face(source_image, target_face, temp_frame)
+                    if hasattr(target_face, "bbox") and target_face.bbox is not None:
+                        swapped_bboxes.append(target_face.bbox.astype(int))
                 temp_frame = fp.apply_post_processing(temp_frame, swapped_bboxes)
             else:
                 temp_frame = fp.process_frame(source_image, temp_frame)
 
         # Once the face has been gone for a while, or async swap is switched
         # off, the last async result is stale.
-        if self._cached_target_face is not None:
+        if target_face is not None:
             self._face_lost_at = None
         elif self._face_lost_at is None:
             self._face_lost_at = time.monotonic()
@@ -473,10 +500,7 @@ class FramePipeline:
 
     def _process_mapped(self, temp_frame: Frame) -> Frame:
         modules.globals.target_path = None
-        # Single-face state goes stale while map-faces runs: resume from a
-        # fresh detection and a fresh async result.
-        self._cached_target_face = None
-        self._cached_many_faces = None
+        # Resume from a fresh async result after map-faces.
         if self._async_swapper is not None:
             self._async_swapper.clear()
         for fp in self._frame_processors:
@@ -560,7 +584,11 @@ def _put_latest(q: queue.Queue, item) -> None:
 
 
 class LiveSession:
-    """Camera -> FramePipeline -> sinks, on two background threads.
+    """Camera -> detect -> swap/render -> sinks, on three background threads.
+
+    Detection and swapping run on separate threads, so the next frame is
+    detected while the current one is swapped (on Apple Silicon they also use
+    different hardware: detection the GPU, the swap model the Neural Engine).
 
     ``sinks`` are callables taking each processed BGR frame (for example a
     VirtualCameraSink). A sink that raises is dropped for the rest of the
@@ -586,6 +614,7 @@ class LiveSession:
         self._stop = threading.Event()
         self._threads: List[threading.Thread] = []
         self._capture_q: queue.Queue = queue.Queue(maxsize=2)
+        self._detect_q: queue.Queue = queue.Queue(maxsize=1)
         self._latest_lock = threading.Lock()
         self._latest: Optional[Frame] = None
         self.camera_size = (0, 0)
@@ -628,6 +657,7 @@ class LiveSession:
         self._pipeline = FramePipeline(self.camera_fps)
         self._threads = [
             threading.Thread(target=self._capture_loop, name="dlc-capture", daemon=True),
+            threading.Thread(target=self._detect_loop, name="dlc-detect", daemon=True),
             threading.Thread(target=self._process_loop, name="dlc-process", daemon=True),
         ]
         for t in self._threads:
@@ -675,18 +705,41 @@ class LiveSession:
                 break
             _put_latest(self._capture_q, frame)
 
-    def _process_loop(self) -> None:
+    def _fail(self, exc: Exception) -> None:
+        self.error = f"processing failed: {exc}"
+        update_status(self.error, "DLC.LIVE")
+        self._stop.set()
+
+    def _detect_loop(self) -> None:
         while not self._stop.is_set():
             try:
                 frame = self._capture_q.get(timeout=0.05)
             except queue.Empty:
                 continue
             try:
-                out = self._pipeline.process(frame)
+                det = self._pipeline.detect(frame)
             except Exception as exc:
-                self.error = f"processing failed: {exc}"
-                update_status(self.error, "DLC.LIVE")
-                self._stop.set()
+                self._fail(exc)
+                break
+            # Blocks while the swap thread is busy, so detection runs at most
+            # one frame ahead and always on a fresh camera frame.
+            while not self._stop.is_set():
+                try:
+                    self._detect_q.put(det, timeout=0.05)
+                    break
+                except queue.Full:
+                    continue
+
+    def _process_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                det = self._detect_q.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            try:
+                out = self._pipeline.render(det)
+            except Exception as exc:
+                self._fail(exc)
                 break
             with self._latest_lock:
                 self._latest = out
@@ -739,6 +792,6 @@ def run_cli(camera: Optional[int], width: int, height: int, virtual_camera: bool
 
 
 __all__ = [
-    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "DelayedSink", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
+    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "DelayedSink", "Detection", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
     "LiveSession", "configure", "ensure_models", "preload_models", "run_cli", "swap_image",
 ]

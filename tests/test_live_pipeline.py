@@ -307,6 +307,61 @@ def test_failing_sink_is_dropped_without_stopping_the_session(clean_globals, no_
     assert len(good) >= 3 and session.sinks == [good.append]
 
 
+def test_session_detects_and_renders_on_separate_threads_in_order(clean_globals, no_faces):
+    g.source_path, g.map_faces, g.live_detect_every_frame = None, False, True
+    detect_threads, render_threads, out = set(), set(), []
+
+    class Counting(_StubCapture):
+        read_delay = 0.005
+        n = 0
+
+        def read(self):
+            time.sleep(self.read_delay)
+            Counting.n += 1
+            return True, np.full((16, 16, 3), Counting.n % 256, dtype=np.uint8)
+
+    def detect(_frame):
+        detect_threads.add(threading.current_thread().name)
+        time.sleep(0.01)
+        return None
+
+    real_render = live.FramePipeline.render
+
+    def render(self, det):
+        render_threads.add(threading.current_thread().name)
+        time.sleep(0.02)
+        return real_render(self, det)
+
+    with patch.object(live, "detect_one_face_fast", detect), patch.object(live.FramePipeline, "render", render):
+        session = live.LiveSession(0, sinks=[lambda f: out.append(int(f[0, 0, 0]))], capture_factory=Counting)
+        session.start()
+        deadline = time.time() + 5
+        while len(out) < 10 and time.time() < deadline:
+            time.sleep(0.02)
+        session.stop()
+    assert detect_threads == {"dlc-detect"} and render_threads == {"dlc-process"}
+    assert len(out) >= 10 and all(a < b for a, b in zip(out, out[1:]))  # newest frames, never reordered
+
+
+def test_detection_failure_stops_the_session_with_an_error(clean_globals, no_faces):
+    g.source_path, g.map_faces, g.live_detect_every_frame = None, False, True
+
+    class Fast(_StubCapture):
+        read_delay = 0.01
+
+    def boom(_frame):
+        raise RuntimeError("detector died")
+
+    with patch.object(live, "detect_one_face_fast", boom):
+        session = live.LiveSession(0, capture_factory=Fast)
+        session.start()
+        deadline = time.time() + 5
+        while session.running and time.time() < deadline:
+            time.sleep(0.02)
+        session.stop()
+    assert not session.running and "detector died" in session.error
+
+
 # ─── configure ────────────────────────────────────────────────────────────
 
 
