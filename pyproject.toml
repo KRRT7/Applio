@@ -58,6 +58,9 @@ faceswap = [
     "protobuf==7.36.2",
     "pygrabber==0.2; sys_platform == 'win32'",
 ]
+dev = [
+    "pytest==9.2.0",
+]
 
 [tool.uv]
 # Applio runs from the source tree (app.py / core.py); it is not an installable package.

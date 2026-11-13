@@ -410,11 +410,12 @@ def _watch_voice():
     now = time.monotonic()
     if not w:
         w.update(silent_since=None, warned_silent=False, had_sound=False, gated_since=None,
-                 warned_gated=False, last_counts={}, last_report=0.0, errors=0)
+                 warned_gated=False, last_counts={}, last_report=float("-inf"), errors=0)
     mic, out = st["input_db"], st["output_db"]
 
     if mic < _SILENT_DB:
-        w["silent_since"] = w["silent_since"] or now
+        if w["silent_since"] is None:
+            w["silent_since"] = now
         if not w["warned_silent"] and now - w["silent_since"] >= 5.0:
             _log(f"Voice WARNING: no sound from the mic for 5 s (level {mic:.0f} dB). Check the Input "
                  "device and its volume, and that Windows allows microphone access.")
@@ -425,7 +426,8 @@ def _watch_voice():
         w.update(silent_since=None, warned_silent=False, had_sound=True)
 
     if mic > _SPEECH_DB and out < _SILENT_DB:
-        w["gated_since"] = w["gated_since"] or now
+        if w["gated_since"] is None:
+            w["gated_since"] = now
         if not w["warned_gated"] and now - w["gated_since"] >= 3.0:
             _log(f"Voice WARNING: you seem to be speaking ({mic:.0f} dB) but the converted output is "
                  "silent. Check Enable VAD / Silence Threshold in the Realtime tab.")
