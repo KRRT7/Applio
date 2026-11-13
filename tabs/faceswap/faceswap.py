@@ -47,6 +47,7 @@ DET_SIZES = [160, 320, 640]
 PREVIEW_WIDTH = 640
 
 DEFAULTS = {
+    "profile": "",
     "face_enabled": True,
     "voice_enabled": True,
     "source_paths": [],
@@ -555,9 +556,93 @@ def stop_voice():
     return gr.skip(), gr.skip(), gr.skip()
 
 
+# ─── profiles (per-person photos + voice + look) ─────────────────────────
+
+
+def _profile_dropdown(value=None):
+    from tabs.faceswap import profiles
+    return gr.Dropdown(choices=profiles.list_profiles(), value=value)
+
+
+def _make_profile_handlers(has_voice):
+    """Load/save/delete handlers; voice outputs only when voice controls exist."""
+    from tabs.faceswap import profiles
+
+    n_voice = len(profiles.VOICE_KEYS) if has_voice else 0
+
+    def load(name):
+        skips = [gr.skip()] * (1 + len(profiles.FACE_KEYS) + n_voice)
+        name = (name or "").strip()
+        if not name or name not in profiles.list_profiles():
+            return (*skips, _status_text())
+        try:
+            prof = profiles.load_profile(name)
+        except (OSError, ValueError) as exc:
+            _log(f"Profile ERROR: could not load '{name}': {exc}")
+            return (*skips, _status_text())
+        face_updates = [gr.update(value=prof["face"][k]) if k in prof["face"] else gr.skip()
+                        for k in profiles.FACE_KEYS]
+        voice_updates = []
+        voice = prof["voice"]
+        if has_voice:
+            controls = _realtime().SESSION_CONTROLS
+            choices = {"model_file": controls["list_models"](), "index_file": controls["list_indexes"]()}
+            for k in profiles.VOICE_KEYS:
+                if k not in voice:
+                    voice_updates.append(gr.skip())
+                elif k in choices:
+                    voice_updates.append(gr.update(value=profiles.match_choice(voice[k], choices[k])))
+                else:
+                    voice_updates.append(gr.update(value=voice[k]))
+        save_settings({**load_settings(), "profile": name})
+        details = f"{len(prof['faces'])} photo(s)"
+        if voice.get("model_file"):
+            details += (f" | voice {os.path.basename(voice['model_file'])}, pitch {voice.get('pitch')}, "
+                        f"index {voice.get('index_rate')}, protect {voice.get('protect')}, {voice.get('f0_method')}")
+        _log(f"Profile '{name}' loaded: {details}")
+        rt = _realtime()
+        if rt is not None and rt.voice_status() is not None and voice.get("model_file"):
+            _log("Profile: a different voice model takes effect on the next Start")
+        return (gr.update(value=prof["faces"] or None), *face_updates, *voice_updates, _status_text())
+
+    def save(name, source, *values):
+        name = (name or "").strip()
+        if not name:
+            gr.Warning(i18n("Type a profile name first."))
+            return gr.skip(), gr.skip(), _status_text()
+        face = dict(zip(profiles.FACE_KEYS, values[:len(profiles.FACE_KEYS)]))
+        voice = dict(zip(profiles.VOICE_KEYS, values[len(profiles.FACE_KEYS):])) if has_voice else {}
+        existed = name in profiles.list_profiles()
+        try:
+            prof = profiles.save_profile(name, _source_paths(source), face, voice)
+        except (OSError, ValueError) as exc:
+            _log(f"Profile ERROR: could not save '{name}': {exc}")
+            return gr.skip(), gr.skip(), _status_text()
+        save_settings({**load_settings(), "profile": name})
+        _log(f"Profile '{name}' {'updated' if existed else 'created'}: {len(prof['faces'])} photo(s)"
+             + (f", voice {os.path.basename(voice.get('model_file') or '')}" if voice else ""))
+        return _profile_dropdown(name), gr.update(value=prof["faces"] or None), _status_text()
+
+    def delete(name):
+        name = (name or "").strip()
+        if not name or name not in profiles.list_profiles():
+            return gr.skip(), _status_text()
+        try:
+            profiles.delete_profile(name)
+        except (OSError, ValueError) as exc:
+            _log(f"Profile ERROR: could not delete '{name}': {exc}")
+            return gr.skip(), _status_text()
+        save_settings({**load_settings(), "profile": ""})
+        _log(f"Profile '{name}' deleted")
+        return _profile_dropdown(None), _status_text()
+
+    return load, save, delete
+
+
 def live_tab():
     """One page for live face swap and live voice: settings in Video / Voice
     sub-tabs, with preview, Start/Stop and the activity log alongside."""
+    from tabs.faceswap import profiles
     from tabs.realtime import realtime as realtime_ui
 
     saved = load_settings()
@@ -615,6 +700,14 @@ def live_tab():
                         realtime_ui.realtime_tab(embedded=True)
 
             with gr.Column(scale=2, min_width=360):
+                with gr.Row(equal_height=True):
+                    known = profiles.list_profiles()
+                    profile = gr.Dropdown(label=i18n("Profile"), choices=known, allow_custom_value=True, scale=3,
+                                          value=saved["profile"] if saved["profile"] in known else None,
+                                          info=i18n("Pick a person to load their photos, voice and look. Type a new name and Save to create one."))
+                    with gr.Column(scale=1, min_width=120):
+                        save_profile_btn = gr.Button(i18n("Save profile"), size="sm")
+                        delete_profile_btn = gr.Button(i18n("Delete"), size="sm", variant="stop")
                 preview = gr.Image(label=i18n("Live preview"), interactive=False, format="jpeg", height=420)
                 rt = _realtime()  # None in client mode: voice then starts from the Voice tab
                 with gr.Row():
@@ -652,6 +745,17 @@ def live_tab():
             start.click(start_face_if_enabled, inputs=[face_on, voice_on, zero, zero, *face_inputs],
                         outputs=[status, timer, video_delay])
             match_voice.visible = False
+        # Profiles: face photos + look settings, plus the Voice tab's voice settings.
+        face_profile = [swap_model, enhancer, mouth_mask, sharpness, color_correction]
+        voice_profile = ([rt.SESSION_CONTROLS["profile_inputs"][k] for k in profiles.VOICE_KEYS]
+                         if rt is not None else [])
+        load_profile, save_profile, delete_profile = _make_profile_handlers(rt is not None)
+        profile.select(load_profile, inputs=profile, outputs=[source, *face_profile, *voice_profile, status])
+        save_profile_btn.click(save_profile, inputs=[profile, source, *face_profile, *voice_profile],
+                               outputs=[profile, source, status])
+        delete_profile_btn.click(delete_profile, inputs=profile, outputs=[profile, status],
+                                 js="(name) => (name && confirm('Delete profile \"' + name + '\"? Its saved photos are removed.')) ? name : null")
+
         timer.tick(poll_preview, outputs=[preview, status, timer], show_progress="hidden")
         for control in [source, *quality]:
             control.change(apply_live, inputs=[source, *quality], show_progress="hidden")

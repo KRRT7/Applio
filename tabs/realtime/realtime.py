@@ -1877,6 +1877,13 @@ def realtime_tab(embedded=False):
                 stop_fn=stop_realtime,
                 outputs=[latency_info, start_button, stop_button],
                 timing_inputs=[chunk_size, cross_fade_overlap_size],
+                # The per-person voice settings a Live profile saves/loads.
+                profile_inputs={
+                    "model_file": model_file, "index_file": index_file, "pitch": pitch,
+                    "index_rate": index_rate, "protect": protect, "f0_method": f0_method,
+                },
+                list_models=lambda: sorted(get_files("model")),
+                list_indexes=lambda: sorted(get_files("index")),
             )  # .then(
             #     fn=lambda: (
             #         yield gr.update(value="Stopped"),
