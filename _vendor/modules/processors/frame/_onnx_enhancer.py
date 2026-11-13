@@ -200,6 +200,60 @@ def _get_face_affine(face: Any, input_size: int):
     return M, inv_M
 
 
+# Feathered blend masks (uint8, 0..255) keyed by input size: built once.
+_MASK_CACHE: dict = {}
+
+
+def _feather_mask(size: int) -> np.ndarray:
+    mask = _MASK_CACHE.get(size)
+    if mask is None:
+        m = np.ones((size, size), dtype=np.float32)
+        border = max(1, size // 16)
+        m[:border, :] = np.linspace(0, 1, border)[:, np.newaxis]
+        m[-border:, :] = np.linspace(1, 0, border)[:, np.newaxis]
+        m[:, :border] = np.minimum(m[:, :border], np.linspace(0, 1, border)[np.newaxis, :])
+        m[:, -border:] = np.minimum(m[:, -border:], np.linspace(1, 0, border)[np.newaxis, :])
+        mask = np.round(m * 255.0).astype(np.uint8)
+        _MASK_CACHE[size] = mask
+    return mask
+
+
+def _paste_back(frame: np.ndarray, enhanced: np.ndarray, inv_M: np.ndarray,
+                mask: np.ndarray) -> np.ndarray:
+    """Blend ``enhanced`` (aligned face) back into a copy of ``frame``.
+
+    Works only on the face's bounding box in frame coordinates and blends
+    in uint8 with cv2's SIMD ops, instead of warping a full-frame image and
+    mask and blending the whole frame in float32.
+    """
+    h, w = frame.shape[:2]
+    size = enhanced.shape[0]
+    corners = np.array([[0, 0], [size, 0], [size, size], [0, size]], dtype=np.float32)
+    pts = corners @ inv_M[:, :2].T + inv_M[:, 2]
+    pad = 2  # interpolation margin; the feather is inside the mask
+    x1 = max(0, int(np.floor(pts[:, 0].min())) - pad)
+    y1 = max(0, int(np.floor(pts[:, 1].min())) - pad)
+    x2 = min(w, int(np.ceil(pts[:, 0].max())) + pad + 1)
+    y2 = min(h, int(np.ceil(pts[:, 1].max())) + pad + 1)
+    if x1 >= x2 or y1 >= y2:
+        return frame
+    inv_crop = inv_M.copy()
+    inv_crop[0, 2] -= x1
+    inv_crop[1, 2] -= y1
+    crop_size = (x2 - x1, y2 - y1)
+    face = cv2.warpAffine(enhanced, inv_crop, crop_size, flags=cv2.INTER_LINEAR,
+                          borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+    alpha = cv2.warpAffine(mask, inv_crop, crop_size, flags=cv2.INTER_LINEAR,
+                           borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    alpha3 = cv2.merge([alpha, alpha, alpha])
+    roi = frame[y1:y2, x1:x2]
+    blended = cv2.add(cv2.multiply(face, alpha3, scale=1.0 / 255.0),
+                      cv2.multiply(roi, 255 - alpha3, scale=1.0 / 255.0))
+    result = frame.copy()
+    result[y1:y2, x1:x2] = blended
+    return result
+
+
 def enhance_face_onnx(
     frame: np.ndarray,
     face: Any,
@@ -221,26 +275,4 @@ def enhance_face_onnx(
         input_name = session.get_inputs()[0].name
         output = run_inference(session, input_name, blob)
     enhanced = postprocess_face(output)
-
-    # Create mask for blending (feathered edges)
-    mask = np.ones((input_size, input_size), dtype=np.float32)
-    border = max(1, input_size // 16)
-    mask[:border, :] = np.linspace(0, 1, border)[:, np.newaxis]
-    mask[-border:, :] = np.linspace(1, 0, border)[:, np.newaxis]
-    mask[:, :border] = np.minimum(mask[:, :border], np.linspace(0, 1, border)[np.newaxis, :])
-    mask[:, -border:] = np.minimum(mask[:, -border:], np.linspace(1, 0, border)[np.newaxis, :])
-
-    h, w = frame.shape[:2]
-    warped_enhanced = cv2.warpAffine(
-        enhanced, inv_M, (w, h),
-        flags=cv2.INTER_LINEAR, borderValue=(0, 0, 0),
-    )
-    warped_mask = cv2.warpAffine(
-        mask, inv_M, (w, h),
-        flags=cv2.INTER_LINEAR, borderValue=0,
-    )
-
-    mask_3ch = warped_mask[:, :, np.newaxis]
-    result = (warped_enhanced.astype(np.float32) * mask_3ch +
-              frame.astype(np.float32) * (1.0 - mask_3ch))
-    return np.clip(result, 0, 255).astype(np.uint8)
+    return _paste_back(frame, enhanced, inv_M, _feather_mask(input_size))
