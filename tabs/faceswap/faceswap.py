@@ -8,6 +8,7 @@ camera so video-call apps can use it.
 import atexit
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -68,7 +69,19 @@ DEFAULTS = {
 _LOCK = threading.Lock()
 _SESSION = None
 _VCAM = None
-_MESSAGES = deque(maxlen=1)
+# Timestamped activity log shown under the status summary (newest last).
+_LOG = deque(maxlen=300)
+_LOG_LOCK = threading.Lock()
+# Keep refreshing Status for a while after a start, even if the face side
+# failed, so the voice side's progress still shows up.
+_POLL_UNTIL = 0.0
+
+
+def _log(message):
+    line = f"{time.strftime('%H:%M:%S')}  {message}"
+    with _LOG_LOCK:
+        _LOG.append(line)
+    print(f"[FaceSwap] {message}")
 
 
 # ─── library access ──────────────────────────────────────────────────────
@@ -90,14 +103,9 @@ def _dlc():
     return deep_live_cam
 
 
-# Routine messages already reflected in the status line (camera size,
-# virtual camera device) are not repeated.
-_QUIET_SCOPES = {"DLC.LIVE", "DLC.VCAM"}
-
-
 def _on_status(message, scope):
-    if scope not in _QUIET_SCOPES or "unavailable" in message or "fail" in message.lower():
-        _MESSAGES.append((time.monotonic(), message))
+    """Every Deep-Live-Cam status message goes into the activity log."""
+    _log(f"Face ({scope.replace('DLC.', '').lower()}): {message}")
 
 
 def camera_choices():
@@ -202,40 +210,82 @@ def _stop_session():
         session.stop()
 
 
+_QUALITY_NAMES = ["swap model", "enhancer", "detection size", "mouth mask", "sharpness",
+                  "stabilization", "detect every frame", "color correction", "all faces",
+                  "mirror", "async swap", "show fps"]
+
+
+def _keep_polling():
+    return _voice_status() is not None or time.monotonic() < _POLL_UNTIL
+
+
+def _face_fail(message):
+    """Log a face-start failure, show a toast, and return the status update."""
+    _log(f"Face ERROR: {message}")
+    gr.Warning(message)
+    return _status_text(), gr.Timer(active=_keep_polling())
+
+
 def start_live(source, camera, resolution, virtual_camera, video_delay, *quality):
-    """Generator: (status, timer) updates while models load and the camera starts."""
+    """Generator: (status, timer) updates while models load and the camera starts.
+
+    Every step and failure is written to the activity log shown in Status.
+    """
     global _SESSION, _VCAM
-    if not _source_paths(source):
-        raise gr.Error(i18n("Add at least one source face photo first."))
+    paths = _source_paths(source)
+    settings = ", ".join(f"{n} {v}" for n, v in zip(_QUALITY_NAMES, quality))
+    _log(f"Face: starting | {len(paths)} source photo(s) | camera {camera} | {resolution} | "
+         f"virtual camera {'on' if virtual_camera else 'off'} | video delay {float(video_delay or 0):.0f} ms")
+    _log(f"Face: settings | {settings}")
+    if not paths:
+        yield _face_fail(i18n("Add at least one source face photo first."))
+        return
     if not camera:
-        raise gr.Error(i18n("No camera selected."))
-    _stop_session()
-    dlc = _dlc()
-
-    dlc.configure(_live_config(source, *quality))
-    yield i18n("Checking models (first run downloads them)..."), gr.Timer(active=False)
-    if not dlc.ensure_models():
-        raise gr.Error(i18n("Could not download the face swap models. Check your connection."))
-
-    index = int(str(camera).split(":", 1)[0])
-    width, height = (int(v) for v in resolution.split("x"))
-    vcam = dlc.DelayedSink(dlc.VirtualCameraSink(), float(video_delay or 0)) if virtual_camera else None
-    session = dlc.LiveSession(index, width, height, sinks=[vcam] if vcam else [])
-    yield i18n("Loading models (the first start compiles them, ~10-20 s)..."), gr.Timer(active=False)
-    dlc.preload_models()
-    yield i18n("Starting camera..."), gr.Timer(active=False)
+        yield _face_fail(i18n("No camera selected."))
+        return
     try:
-        session.start()
-    except RuntimeError as exc:
-        raise gr.Error(str(exc))
-    with _LOCK:
-        _SESSION, _VCAM = session, vcam
+        _stop_session()
+        dlc = _dlc()
+        config = _live_config(source, *quality)
+        dlc.configure(config)
+        _log(f"Face: using {config.execution_providers[0]} | sources: " + ", ".join(os.path.basename(p) for p in paths))
+        _log("Face: checking models (first run downloads them)...")
+        yield _status_text(), gr.Timer(active=False)
+        if not dlc.ensure_models():
+            yield _face_fail(i18n("Could not download the face swap models. Check your connection."))
+            return
+
+        index = int(str(camera).split(":", 1)[0])
+        width, height = (int(v) for v in resolution.split("x"))
+        vcam = dlc.DelayedSink(dlc.VirtualCameraSink(), float(video_delay or 0)) if virtual_camera else None
+        session = dlc.LiveSession(index, width, height, sinks=[vcam] if vcam else [])
+        _log("Face: loading models (the first start compiles them, ~10-20 s)...")
+        yield _status_text(), gr.Timer(active=False)
+        t0 = time.monotonic()
+        dlc.preload_models()
+        _log(f"Face: models loaded in {time.monotonic() - t0:.1f} s; starting camera {index}...")
+        yield _status_text(), gr.Timer(active=False)
+        try:
+            session.start()
+        except RuntimeError as exc:
+            yield _face_fail(str(exc))
+            return
+        with _LOCK:
+            _SESSION, _VCAM = session, vcam
+        w, h = session.camera_size
+        _log(f"Face: live | camera running at {w}x{h}@{session.camera_fps:.0f}fps")
+    except gr.Error as exc:
+        yield _face_fail(str(exc))
+        return
+    except Exception as exc:  # anything unexpected: keep it visible in Status
+        yield _face_fail(f"{type(exc).__name__}: {exc}")
+        return
 
     save_settings(dict(zip(
         ["source_paths", "camera", "resolution", "virtual_camera", "video_delay", "swap_model", "enhancer",
          "det_size", "mouth_mask", "sharpness", "stabilization", "detect_every_frame",
          "color_correction", "many_faces", "mirror", "async_swap", "show_fps"],
-        [_source_paths(source), camera, resolution, bool(virtual_camera), float(video_delay or 0), *quality],
+        [paths, camera, resolution, bool(virtual_camera), float(video_delay or 0), *quality],
     )))
     yield _status_text(), gr.Timer(active=True)
 
@@ -243,7 +293,13 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
 def start_live_with_voice(chunk_size_ms, cross_fade_s, source, camera, resolution, virtual_camera, video_delay, *quality):
     """start_live for "Start face + voice": a 0 video delay is set to the
     estimate that matches the voice, and the slider is updated to show it."""
+    global _POLL_UNTIL
+    _POLL_UNTIL = time.monotonic() + 30.0
+    _log("Start face + voice pressed")
     delay = float(video_delay or 0) or estimate_voice_delay(chunk_size_ms, cross_fade_s)
+    if not float(video_delay or 0):
+        _log(f"Face + voice: video delay auto-set to {delay:.0f} ms "
+             f"(voice chunk {float(chunk_size_ms or 0):.0f} ms + crossfade {float(cross_fade_s or 0) * 1000:.0f} ms)")
     first = True
     for status, timer in start_live(source, camera, resolution, virtual_camera, delay, *quality):
         yield status, timer, (gr.update(value=delay) if first else gr.skip())
@@ -259,8 +315,51 @@ def set_video_delay(delay_ms):
 
 
 def stop_live():
+    with _LOCK:
+        was_running = _SESSION is not None
     _stop_session()
-    return i18n("Stopped."), gr.Timer(active=False), None
+    _log("Face: stopped" if was_running else "Face: stop pressed (was not running)")
+    return _status_text(), gr.Timer(active=_keep_polling()), None
+
+
+def voice_start_logged(*args):
+    """The Realtime tab's start handler, with its settings and every status
+    change written to the activity log. Yields the handler's updates as-is."""
+    rt = _realtime()
+    controls = rt.SESSION_CONTROLS
+    pairs = []
+    for component, value in zip(controls["start_inputs"], args):
+        label = getattr(component, "label", None)
+        if label and value not in (None, ""):
+            pairs.append(f"{label}: {value}")
+    _log("Voice: starting | " + " | ".join(pairs))
+    # Progress counters ("Loading model... (3s)", warm-up bars) are logged
+    # once; the live latency readout is in the summary line instead.
+    last_kind, said_running, t_start = None, False, time.monotonic()
+    try:
+        for update in controls["start_fn"](*args):
+            text = update[0] if isinstance(update, tuple) else update
+            text = text.get("value", "") if isinstance(text, dict) else str(text)
+            kind = re.sub(r"\s*\(.*?\).*$", "", text).strip()  # drop "(3s)", "(12 blocks) ███"
+            if text.startswith("Latency"):
+                if not said_running:
+                    _log(f"Voice: running after {time.monotonic() - t_start:.0f} s ({text})")
+                    said_running = True
+            elif text and kind != last_kind:
+                _log(f"Voice: {kind or text}")
+            last_kind = kind
+            yield update
+    except Exception as exc:
+        _log(f"Voice ERROR: {type(exc).__name__}: {exc}")
+        raise
+    _log("Voice: stopped")
+
+
+def voice_stop_logged():
+    result = _realtime().SESSION_CONTROLS["stop_fn"]()
+    text = result[0] if isinstance(result, tuple) else result
+    _log(f"Voice: stop pressed ({text})")
+    return result
 
 
 def apply_live(source, *quality):
@@ -289,7 +388,7 @@ def _voice_status():
     return rt.voice_status() if rt is not None else None
 
 
-def _status_text():
+def _summary():
     with _LOCK:
         session, vcam = _SESSION, _VCAM
     voice = _voice_status()
@@ -309,22 +408,28 @@ def _status_text():
             parts.append(f"{i18n('virtual camera')}: {vcam.device}")
     if voice:
         parts.append(voice)
-    if _MESSAGES and time.monotonic() - _MESSAGES[-1][0] < 5.0:
-        parts.append(_MESSAGES[-1][1])  # latest library message, for 5 s
     return " · ".join(parts)
+
+
+def _status_text():
+    """Live summary line, then the activity log (newest last)."""
+    with _LOG_LOCK:
+        lines = list(_LOG)
+    return _summary() + ("\n" + "─" * 40 + "\n" + "\n".join(lines) if lines else "")
 
 
 def poll_preview():
     with _LOCK:
         session = _SESSION
     if session is None:
-        # Keep the shared status line updating while voice runs on its own.
-        voice = _voice_status()
-        return gr.skip(), _status_text(), gr.Timer(active=voice is not None)
+        # Keep the status updating while voice runs on its own, or shortly
+        # after a start (so a failed face start still shows voice progress).
+        return gr.skip(), _status_text(), gr.Timer(active=_keep_polling())
     frame = session.latest_frame
     if not session.running:
         _stop_session()
-        return gr.skip(), _status_text() if session.error is None else f"{i18n('Error')}: {session.error}", gr.Timer(active=False)
+        _log(f"Face ERROR: {session.error}" if session.error else "Face: session ended")
+        return gr.skip(), _status_text(), gr.Timer(active=_keep_polling())
     if frame is None:
         return gr.skip(), _status_text(), gr.Timer()
     h, w = frame.shape[:2]
@@ -401,7 +506,8 @@ def faceswap_tab():
                         stop_all = gr.Button(i18n("Stop all"))
                     gr.Markdown(i18n("Voice uses the model, devices and settings chosen in the Realtime tab."),
                                 elem_classes="applio-card-desc")
-                status = gr.Textbox(label=i18n("Status"), value=i18n("Stopped."), interactive=False)
+                status = gr.Textbox(label=i18n("Status"), value=i18n("Stopped."), interactive=False,
+                                    lines=10, max_lines=18, autoscroll=True, buttons=["copy"])
 
         timer = gr.Timer(0.2, active=False)
         quality = [swap_model, enhancer, det_size, mouth_mask, sharpness, stabilization, detect_every_frame,
@@ -420,9 +526,9 @@ def faceswap_tab():
             start_both.click(start_live_with_voice, inputs=[*controls["timing_inputs"], *face_inputs],
                              outputs=[status, timer, video_delay])
             match_voice.click(estimate_voice_delay, inputs=controls["timing_inputs"], outputs=video_delay)
-            start_both.click(controls["start_fn"], inputs=controls["start_inputs"], outputs=controls["outputs"])
+            start_both.click(voice_start_logged, inputs=controls["start_inputs"], outputs=controls["outputs"])
             stop_all.click(stop_live, outputs=[status, timer, preview])
-            stop_all.click(controls["stop_fn"], outputs=controls["outputs"])
+            stop_all.click(voice_stop_logged, outputs=controls["outputs"])
         timer.tick(poll_preview, outputs=[preview, status, timer], show_progress="hidden")
         for control in [source, *quality]:
             control.change(apply_live, inputs=[source, *quality], show_progress="hidden")
