@@ -238,11 +238,26 @@ def apply_live(source, *quality):
     dlc.ensure_models()  # downloads a newly selected model/enhancer if needed
 
 
+def _realtime():
+    """The Realtime tab module, if its server-side controls are available."""
+    try:
+        from tabs.realtime import realtime
+    except Exception:
+        return None
+    return realtime if realtime.SESSION_CONTROLS else None
+
+
+def _voice_status():
+    rt = _realtime()
+    return rt.voice_status() if rt is not None else None
+
+
 def _status_text():
     with _LOCK:
         session, vcam = _SESSION, _VCAM
+    voice = _voice_status()
     if session is None:
-        return i18n("Stopped.")
+        return f"{i18n('Face stopped')} · {voice}" if voice else i18n("Stopped.")
     if session.error:
         return f"{i18n('Error')}: {session.error}"
     w, h = session.camera_size
@@ -255,6 +270,8 @@ def _status_text():
             parts.append(f"{i18n('virtual camera unavailable')}: {vcam.error}")
         elif vcam.device:
             parts.append(f"{i18n('virtual camera')}: {vcam.device}")
+    if voice:
+        parts.append(voice)
     if _MESSAGES and time.monotonic() - _MESSAGES[-1][0] < 5.0:
         parts.append(_MESSAGES[-1][1])  # latest library message, for 5 s
     return " · ".join(parts)
@@ -264,7 +281,9 @@ def poll_preview():
     with _LOCK:
         session = _SESSION
     if session is None:
-        return gr.skip(), i18n("Stopped."), gr.Timer(active=False)
+        # Keep the shared status line updating while voice runs on its own.
+        voice = _voice_status()
+        return gr.skip(), _status_text(), gr.Timer(active=voice is not None)
     frame = session.latest_frame
     if not session.running:
         _stop_session()
@@ -335,6 +354,13 @@ def faceswap_tab():
                 with gr.Row():
                     start = gr.Button(i18n("Start"), variant="primary")
                     stop = gr.Button(i18n("Stop"))
+                rt = _realtime()
+                if rt is not None:
+                    with gr.Row():
+                        start_both = gr.Button(i18n("Start face + voice"), variant="primary")
+                        stop_all = gr.Button(i18n("Stop all"))
+                    gr.Markdown(i18n("Voice uses the model, devices and settings chosen in the Realtime tab."),
+                                elem_classes="applio-card-desc")
                 status = gr.Textbox(label=i18n("Status"), value=i18n("Stopped."), interactive=False)
 
         timer = gr.Timer(0.2, active=False)
@@ -344,6 +370,16 @@ def faceswap_tab():
         refresh.click(lambda: gr.Dropdown(choices=camera_choices()), outputs=camera)
         start.click(start_live, inputs=[source, camera, resolution, virtual_camera, *quality], outputs=[status, timer])
         stop.click(stop_live, outputs=[status, timer, preview])
+        if rt is not None:
+            controls = rt.SESSION_CONTROLS
+            face_inputs = [source, camera, resolution, virtual_camera, *quality]
+            # Two listeners on one click run concurrently: the face session
+            # here, and the Realtime tab's own start handler with its own
+            # controls (so that tab's buttons and latency readout stay in sync).
+            start_both.click(start_live, inputs=face_inputs, outputs=[status, timer])
+            start_both.click(controls["start_fn"], inputs=controls["start_inputs"], outputs=controls["outputs"])
+            stop_all.click(stop_live, outputs=[status, timer, preview])
+            stop_all.click(controls["stop_fn"], outputs=controls["outputs"])
         timer.tick(poll_preview, outputs=[preview, status, timer], show_progress="hidden")
         for control in [source, *quality]:
             control.change(apply_live, inputs=[source, *quality], show_progress="hidden")

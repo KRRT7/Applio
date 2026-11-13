@@ -335,6 +335,26 @@ interactive_true = gr.update(interactive=True, visible=True)
 interactive_false = gr.update(interactive=False, visible=False)
 interactive_visible = gr.update(interactive=False, visible=True)
 running, callbacks, audio_manager = False, None, None
+
+# Filled by realtime_tab() so other tabs (Face Swap's "Start face + voice")
+# can start/stop voice conversion with this tab's own controls and handlers.
+SESSION_CONTROLS = {}
+
+
+def voice_status():
+    """Short status of realtime voice conversion, or None when it is off."""
+    am, cb = audio_manager, callbacks
+    if not running or cb is None:
+        return None
+    if am is None or not getattr(getattr(cb, "vc", None), "ready", False):
+        return i18n("loading voice model")
+    warmup = getattr(getattr(cb.vc, "vc_model", None), "warmup_blocks", 0)
+    if warmup:
+        return i18n("voice warming up")
+    # am.latency is per-block processing time, not end-to-end delay (that is
+    # dominated by the chunk size), so label it as such.
+    latency = getattr(am, "latency", None)
+    return i18n("voice on ({:.0f} ms/block)").format(latency) if latency is not None else i18n("voice on")
 callbacks_kwargs = {}
 
 CONFIG_PATH = os.path.join(now_dir, "assets", "config.json")
@@ -1755,9 +1775,7 @@ def realtime_tab():
                 outputs=[json_value_hidden],
             )
         else:
-            start_button.click(
-                fn=_realtime_with_toast,
-                inputs=[
+            start_inputs = [
                     terms_checkbox,
                     input_audio_device,
                     input_audio_gain,
@@ -1793,12 +1811,21 @@ def realtime_tab():
                     formant_shifting,
                     formant_qfrency,
                     formant_timbre,
-                ],
+                ]
+            start_button.click(
+                fn=_realtime_with_toast,
+                inputs=start_inputs,
                 outputs=[latency_info, start_button, stop_button],
             )
 
             stop_button.click(
                 fn=stop_realtime, outputs=[latency_info, start_button, stop_button]
+            )
+            SESSION_CONTROLS.update(
+                start_fn=_realtime_with_toast,
+                start_inputs=start_inputs,
+                stop_fn=stop_realtime,
+                outputs=[latency_info, start_button, stop_button],
             )  # .then(
             #     fn=lambda: (
             #         yield gr.update(value="Stopped"),
