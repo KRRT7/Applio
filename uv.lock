@@ -126,7 +126,15 @@ build = [
     { name = "zstandard" },
 ]
 faceswap = [
-    { name = "deep-live-cam" },
+    { name = "certifi" },
+    { name = "cv2-enumerate-cameras" },
+    { name = "insightface" },
+    { name = "opencv-python-headless" },
+    { name = "pillow" },
+    { name = "protobuf" },
+    { name = "pygrabber", marker = "sys_platform == 'win32'" },
+    { name = "pyvirtualcam" },
+    { name = "scikit-learn" },
 ]
 ui = [
     { name = "gradio" },
@@ -171,7 +179,17 @@ build = [
     { name = "nuitka", specifier = "==4.3.5" },
     { name = "zstandard", specifier = "==0.25.0" },
 ]
-faceswap = [{ name = "deep-live-cam", editable = "../Deep-Live-Cam" }]
+faceswap = [
+    { name = "certifi", specifier = "==2026.10.23" },
+    { name = "cv2-enumerate-cameras", specifier = "==1.4.0" },
+    { name = "insightface", specifier = "==0.7.3" },
+    { name = "opencv-python-headless", specifier = "==4.14.0.94" },
+    { name = "pillow", specifier = "==12.3.0" },
+    { name = "protobuf", specifier = "==7.36.2" },
+    { name = "pygrabber", marker = "sys_platform == 'win32'", specifier = "==0.2" },
+    { name = "pyvirtualcam", specifier = "==0.15.0" },
+    { name = "scikit-learn", specifier = "==1.9.1" },
+]
 ui = [{ name = "gradio", specifier = "==6.20.0" }]
 
 [[package]]
@@ -575,50 +593,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/60/8b/32f9823da46cde7df
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/7f/798705f5296a58ca505d600456748d1be48078eac8a7050d8a98bc9edb89/decorator-5.3.1-py3-none-any.whl", hash = "sha256:f47fe6fdbd2edd623ecfe36875d37aba411624e2670dd395dddae1358689bb3c", size = 10365, upload-time = "2026-05-18T06:03:26.517Z" },
 ]
-
-[[package]]
-name = "deep-live-cam"
-version = "2.1.5"
-source = { editable = "../Deep-Live-Cam" }
-dependencies = [
-    { name = "certifi" },
-    { name = "cv2-enumerate-cameras" },
-    { name = "insightface" },
-    { name = "numpy" },
-    { name = "onnx" },
-    { name = "onnxruntime", marker = "sys_platform != 'win32'" },
-    { name = "onnxruntime-gpu", marker = "sys_platform == 'win32'" },
-    { name = "opencv-python-headless" },
-    { name = "pillow" },
-    { name = "protobuf" },
-    { name = "psutil" },
-    { name = "pygrabber", marker = "sys_platform == 'win32'" },
-    { name = "pyvirtualcam" },
-    { name = "scikit-learn" },
-    { name = "tqdm" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "certifi", specifier = ">=2024.7.4" },
-    { name = "cv2-enumerate-cameras", specifier = ">=1.1" },
-    { name = "insightface", specifier = "==0.7.3" },
-    { name = "keras", marker = "extra == 'nsfw'", specifier = ">=3.0.0" },
-    { name = "numpy", specifier = ">=2.0,<3" },
-    { name = "onnx", specifier = ">=1.16" },
-    { name = "onnxruntime", marker = "sys_platform == 'darwin' or sys_platform == 'linux'", specifier = ">=1.20" },
-    { name = "onnxruntime-gpu", marker = "sys_platform == 'win32'", specifier = ">=1.20" },
-    { name = "opencv-python-headless", specifier = ">=4.10,<5" },
-    { name = "opennsfw2", marker = "extra == 'nsfw'", specifier = ">=0.18" },
-    { name = "pillow" },
-    { name = "protobuf", specifier = ">=4" },
-    { name = "psutil" },
-    { name = "pygrabber", marker = "sys_platform == 'win32'" },
-    { name = "pyvirtualcam", specifier = ">=0.15" },
-    { name = "scikit-learn" },
-    { name = "tqdm", specifier = ">=4.66.3" },
-]
-provides-extras = ["nsfw"]
 
 [[package]]
 name = "easydict"

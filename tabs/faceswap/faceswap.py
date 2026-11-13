@@ -1,4 +1,4 @@
-"""Face Swap tab: live face swap from a camera via the Deep-Live-Cam library.
+"""Face Swap tab: live face swap from a camera via the vendored Deep-Live-Cam.
 
 The camera is read and processed locally (deep_live_cam.LiveSession); this
 tab only drives it and shows a preview. Output can also go to a virtual
@@ -24,6 +24,9 @@ from assets.i18n.i18n import I18nAuto
 i18n = I18nAuto()
 
 CONFIG_PATH = os.path.join(now_dir, "assets", "config.json")
+# Keep Deep-Live-Cam's models with Applio's other models (git-ignored), not
+# inside _vendor/. Must be set before the vendored package is imported.
+os.environ.setdefault("DLC_MODELS_DIR", os.path.join(now_dir, "rvc", "models", "faceswap"))
 
 SWAP_MODELS = [
     ("HyperSwap 1c (recommended)", "hyperswap_1c_256"),
@@ -67,13 +70,14 @@ _MESSAGES = deque(maxlen=1)
 
 
 def _dlc():
-    """Import deep_live_cam lazily so Applio still starts without it."""
+    """Import the vendored deep_live_cam lazily so Applio starts even if its
+    dependencies (the 'faceswap' dependency group) are missing."""
     try:
-        import deep_live_cam
+        from _vendor import deep_live_cam
     except ImportError as exc:
         raise gr.Error(
-            "Deep-Live-Cam is not installed. Run `uv sync` (it is in the "
-            "'faceswap' dependency group)."
+            f"Face swap dependencies are missing ({exc}). Run `uv sync`; they "
+            "are in the 'faceswap' dependency group."
         ) from exc
     if not getattr(_dlc, "_listening", False):
         deep_live_cam.add_status_listener(lambda message, _scope: _MESSAGES.append(message))
