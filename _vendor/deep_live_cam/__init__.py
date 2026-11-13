@@ -24,6 +24,7 @@ from _vendor.modules.execution import suggest_default_execution_provider, sugges
 from _vendor.modules.live import (
     ENHANCERS,
     SWAP_MODELS,
+    DelayedSink,
     FramePipeline,
     LiveConfig,
     LiveSession,
@@ -40,6 +41,7 @@ from _vendor.modules.virtual_camera import VirtualCameraSink
 __all__ = [
     "ENHANCERS",
     "SWAP_MODELS",
+    "DelayedSink",
     "FramePipeline",
     "LiveConfig",
     "LiveSession",

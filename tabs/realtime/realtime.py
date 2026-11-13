@@ -1826,6 +1826,7 @@ def realtime_tab():
                 start_inputs=start_inputs,
                 stop_fn=stop_realtime,
                 outputs=[latency_info, start_button, stop_button],
+                timing_inputs=[chunk_size, cross_fade_overlap_size],
             )  # .then(
             #     fn=lambda: (
             #         yield gr.update(value="Stopped"),

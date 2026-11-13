@@ -22,6 +22,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Sequence
 
@@ -487,6 +488,55 @@ class FramePipeline:
         return temp_frame
 
 
+# ─── output delay (lip sync) ─────────────────────────────────────────────
+
+
+class DelayedSink:
+    """Pass frames to ``sink`` ``delay_ms`` later, to line video up with audio.
+
+    Live voice conversion delays the voice by its chunk size and more, so
+    without this the swapped lips move before the words. Frames are held in
+    a timestamped queue; each call forwards the newest frame that is at
+    least ``delay_ms`` old (older eligible frames are skipped, so lowering
+    the delay never bursts out a backlog). ``delay_ms`` may be changed while
+    running. 0 forwards immediately.
+    """
+
+    def __init__(self, sink: FrameSink, delay_ms: float = 0.0, clock: Callable[[], float] = time.monotonic):
+        self.sink = sink
+        self.delay_ms = float(delay_ms)
+        self._clock = clock
+        self._queue: "deque" = deque()
+
+    def __call__(self, frame: Frame) -> None:
+        delay = max(0.0, self.delay_ms) / 1000.0
+        if delay == 0.0:
+            self._queue.clear()
+            self.sink(frame)
+            return
+        now = self._clock()
+        self._queue.append((now, frame))
+        ready = None
+        while self._queue and self._queue[0][0] <= now - delay:
+            ready = self._queue.popleft()[1]
+        if ready is not None:
+            self.sink(ready)
+
+    @property
+    def error(self):
+        return getattr(self.sink, "error", None)
+
+    @property
+    def device(self):
+        return getattr(self.sink, "device", None)
+
+    def close(self) -> None:
+        self._queue.clear()
+        close = getattr(self.sink, "close", None)
+        if close is not None:
+            close()
+
+
 # ─── live session ────────────────────────────────────────────────────────
 
 
@@ -685,6 +735,6 @@ def run_cli(camera: Optional[int], width: int, height: int, virtual_camera: bool
 
 
 __all__ = [
-    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
+    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "DelayedSink", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
     "LiveSession", "configure", "ensure_models", "preload_models", "run_cli", "swap_image",
 ]

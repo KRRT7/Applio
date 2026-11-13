@@ -50,6 +50,7 @@ DEFAULTS = {
     "camera": "",
     "resolution": "1280x720",
     "virtual_camera": True,
+    "video_delay": 0,
     "swap_model": "hyperswap_1c_256",
     "enhancer": "none",
     "det_size": 320,
@@ -175,6 +176,24 @@ def _live_config(sources, swap_model, enhancer, det_size, mouth_mask, sharpness,
     )
 
 
+# The video swap path lags the camera by roughly this much (one camera frame
+# plus processing), so it is subtracted from the voice delay when matching.
+_VIDEO_OWN_LATENCY_MS = 65
+# Per-block processing plus audio device buffering, on top of chunk+crossfade.
+_VOICE_OVERHEAD_MS = 25
+
+
+def estimate_voice_delay(chunk_size_ms, cross_fade_s):
+    """Video delay (ms) that lines swapped lips up with realtime voice.
+
+    Voice output trails the mic by about chunk + crossfade + overhead; the
+    video already trails the camera by _VIDEO_OWN_LATENCY_MS. An estimate:
+    fine-tune by clapping on camera and watching a recording.
+    """
+    voice = float(chunk_size_ms or 0) + float(cross_fade_s or 0) * 1000 + _VOICE_OVERHEAD_MS
+    return int(round(max(0.0, voice - _VIDEO_OWN_LATENCY_MS) / 10) * 10)
+
+
 def _stop_session():
     global _SESSION, _VCAM
     with _LOCK:
@@ -183,7 +202,7 @@ def _stop_session():
         session.stop()
 
 
-def start_live(source, camera, resolution, virtual_camera, *quality):
+def start_live(source, camera, resolution, virtual_camera, video_delay, *quality):
     """Generator: (status, timer) updates while models load and the camera starts."""
     global _SESSION, _VCAM
     if not _source_paths(source):
@@ -200,7 +219,7 @@ def start_live(source, camera, resolution, virtual_camera, *quality):
 
     index = int(str(camera).split(":", 1)[0])
     width, height = (int(v) for v in resolution.split("x"))
-    vcam = dlc.VirtualCameraSink() if virtual_camera else None
+    vcam = dlc.DelayedSink(dlc.VirtualCameraSink(), float(video_delay or 0)) if virtual_camera else None
     session = dlc.LiveSession(index, width, height, sinks=[vcam] if vcam else [])
     yield i18n("Loading models (the first start compiles them, ~10-20 s)..."), gr.Timer(active=False)
     dlc.preload_models()
@@ -213,12 +232,30 @@ def start_live(source, camera, resolution, virtual_camera, *quality):
         _SESSION, _VCAM = session, vcam
 
     save_settings(dict(zip(
-        ["source_paths", "camera", "resolution", "virtual_camera", "swap_model", "enhancer",
+        ["source_paths", "camera", "resolution", "virtual_camera", "video_delay", "swap_model", "enhancer",
          "det_size", "mouth_mask", "sharpness", "stabilization", "detect_every_frame",
          "color_correction", "many_faces", "mirror", "async_swap", "show_fps"],
-        [_source_paths(source), camera, resolution, bool(virtual_camera), *quality],
+        [_source_paths(source), camera, resolution, bool(virtual_camera), float(video_delay or 0), *quality],
     )))
     yield _status_text(), gr.Timer(active=True)
+
+
+def start_live_with_voice(chunk_size_ms, cross_fade_s, source, camera, resolution, virtual_camera, video_delay, *quality):
+    """start_live for "Start face + voice": a 0 video delay is set to the
+    estimate that matches the voice, and the slider is updated to show it."""
+    delay = float(video_delay or 0) or estimate_voice_delay(chunk_size_ms, cross_fade_s)
+    first = True
+    for status, timer in start_live(source, camera, resolution, virtual_camera, delay, *quality):
+        yield status, timer, (gr.update(value=delay) if first else gr.skip())
+        first = False
+
+
+def set_video_delay(delay_ms):
+    """Change the delay of the running virtual-camera output."""
+    with _LOCK:
+        vcam = _VCAM
+    if vcam is not None and hasattr(vcam, "delay_ms"):
+        vcam.delay_ms = float(delay_ms or 0)
 
 
 def stop_live():
@@ -326,6 +363,9 @@ def faceswap_tab():
                         label=i18n("Send to virtual camera (OBS Virtual Camera)"), value=saved["virtual_camera"],
                         info=i18n("On macOS: install OBS and start its virtual camera once; OBS does not need to run."),
                     )
+                    video_delay = gr.Slider(label=i18n("Video delay (ms)"), minimum=0, maximum=1000, step=10, value=saved["video_delay"],
+                                            info=i18n("Delays the virtual-camera video so lips match converted voice. Fine-tune by clapping on camera."))
+                    match_voice = gr.Button(i18n("Match voice delay"), size="sm", visible=_realtime() is not None)
 
                 with step_card(3, "Quality", i18n, description="Changes apply immediately while live."):
                     swap_model = gr.Dropdown(label=i18n("Swap model"), choices=SWAP_MODELS, value=saved["swap_model"])
@@ -368,15 +408,18 @@ def faceswap_tab():
                    color_correction, many_faces, mirror, async_swap, show_fps]
 
         refresh.click(lambda: gr.Dropdown(choices=camera_choices()), outputs=camera)
-        start.click(start_live, inputs=[source, camera, resolution, virtual_camera, *quality], outputs=[status, timer])
+        start.click(start_live, inputs=[source, camera, resolution, virtual_camera, video_delay, *quality], outputs=[status, timer])
+        video_delay.change(set_video_delay, inputs=video_delay, show_progress="hidden")
         stop.click(stop_live, outputs=[status, timer, preview])
         if rt is not None:
             controls = rt.SESSION_CONTROLS
-            face_inputs = [source, camera, resolution, virtual_camera, *quality]
+            face_inputs = [source, camera, resolution, virtual_camera, video_delay, *quality]
             # Two listeners on one click run concurrently: the face session
             # here, and the Realtime tab's own start handler with its own
             # controls (so that tab's buttons and latency readout stay in sync).
-            start_both.click(start_live, inputs=face_inputs, outputs=[status, timer])
+            start_both.click(start_live_with_voice, inputs=[*controls["timing_inputs"], *face_inputs],
+                             outputs=[status, timer, video_delay])
+            match_voice.click(estimate_voice_delay, inputs=controls["timing_inputs"], outputs=video_delay)
             start_both.click(controls["start_fn"], inputs=controls["start_inputs"], outputs=controls["outputs"])
             stop_all.click(stop_live, outputs=[status, timer, preview])
             stop_all.click(controls["stop_fn"], outputs=controls["outputs"])
