@@ -388,6 +388,68 @@ def _voice_status():
     return rt.voice_status() if rt is not None else None
 
 
+# Thresholds for the voice diagnostics written to the activity log.
+_SILENT_DB = -60.0        # below this the mic (or output) counts as silent
+_SOUND_DB = -50.0         # above this the mic counts as having sound
+_SPEECH_DB = -35.0        # roughly speaking level; VAD rightly mutes quieter room noise
+_VOICE_WATCH = {}
+
+
+def _watch_voice():
+    """Log notable live-audio events (silence, dropouts, overruns, errors)."""
+    rt = _realtime()
+    st = rt.voice_stats() if rt is not None and hasattr(rt, "voice_stats") else None
+    w = _VOICE_WATCH
+    if not st or not st.get("blocks"):
+        if not st:
+            w.clear()
+        return
+    now = time.monotonic()
+    if not w:
+        w.update(silent_since=None, warned_silent=False, had_sound=False, gated_since=None,
+                 warned_gated=False, last_counts={}, last_report=0.0, errors=0)
+    mic, out = st["input_db"], st["output_db"]
+
+    if mic < _SILENT_DB:
+        w["silent_since"] = w["silent_since"] or now
+        if not w["warned_silent"] and now - w["silent_since"] >= 5.0:
+            _log(f"Voice WARNING: no sound from the mic for 5 s (level {mic:.0f} dB). Check the Input "
+                 "device and its volume, and that Windows allows microphone access.")
+            w["warned_silent"] = True
+    elif mic > _SOUND_DB:
+        if not w["had_sound"] or w["warned_silent"]:
+            _log(f"Voice: mic sound detected ({mic:.0f} dB)")
+        w.update(silent_since=None, warned_silent=False, had_sound=True)
+
+    if mic > _SPEECH_DB and out < _SILENT_DB:
+        w["gated_since"] = w["gated_since"] or now
+        if not w["warned_gated"] and now - w["gated_since"] >= 3.0:
+            _log(f"Voice WARNING: you seem to be speaking ({mic:.0f} dB) but the converted output is "
+                 "silent. Check Enable VAD / Silence Threshold in the Realtime tab.")
+            w["warned_gated"] = True
+    else:
+        w.update(gated_since=None, warned_gated=False)
+
+    counts = {k: st[k] for k in ("overruns", "input_overflows", "output_underflows")}
+    new = {k: v - w["last_counts"].get(k, 0) for k, v in counts.items() if v > w["last_counts"].get(k, 0)}
+    if new and now - w["last_report"] >= 5.0:
+        parts = []
+        if "overruns" in new:
+            parts.append(f"{new['overruns']} block(s) took longer than the block time "
+                         f"({st['latency_ms']:.0f} ms > {st['block_ms']:.0f} ms)")
+        if "output_underflows" in new:
+            parts.append(f"{new['output_underflows']} output dropout(s)")
+        if "input_overflows" in new:
+            parts.append(f"{new['input_overflows']} lost input block(s)")
+        _log("Voice WARNING: " + "; ".join(parts) + ". Audio may stutter: try Async swap or a lighter "
+             "face setting, or a larger Chunk Size.")
+        w["last_counts"], w["last_report"] = counts, now
+
+    if st["callback_errors"] > w["errors"]:
+        _log(f"Voice ERROR in the audio stream ({st['callback_errors']} so far): {st['last_error']}")
+        w["errors"] = st["callback_errors"]
+
+
 def _summary():
     with _LOCK:
         session, vcam = _SESSION, _VCAM
@@ -419,6 +481,7 @@ def _status_text():
 
 
 def poll_preview():
+    _watch_voice()
     with _LOCK:
         session = _SESSION
     if session is None:

@@ -341,8 +341,24 @@ running, callbacks, audio_manager = False, None, None
 SESSION_CONTROLS = {}
 
 
+def voice_stats():
+    """Live audio diagnostics from the running stream, or None."""
+    am = audio_manager
+    if not running or am is None or not hasattr(am, "stats"):
+        return None
+    return am.stats()
+
+
+def _level(db):
+    """'-32 dB ▮▮▮▮▯▯' style meter over -60..0 dB."""
+    if db is None or db == float("-inf"):
+        return "silent ▯▯▯▯▯▯"
+    filled = int(round(max(0.0, min(1.0, (db + 60.0) / 60.0)) * 6))
+    return f"{db:.0f} dB " + "▮" * filled + "▯" * (6 - filled)
+
+
 def voice_status():
-    """Short status of realtime voice conversion, or None when it is off."""
+    """Short live status of realtime voice conversion, or None when it is off."""
     am, cb = audio_manager, callbacks
     if not running or cb is None:
         return None
@@ -351,12 +367,23 @@ def voice_status():
     warmup = getattr(getattr(cb.vc, "vc_model", None), "warmup_blocks", 0)
     if warmup:
         return i18n("voice warming up")
-    # am.latency is per-block processing time, not end-to-end delay (that is
-    # dominated by the chunk size), so label it as such.
-    latency = getattr(am, "latency", None)
-    return i18n("voice on ({:.0f} ms/block)").format(latency) if latency is not None else i18n("voice on")
-callbacks_kwargs = {}
+    st = voice_stats()
+    if not st or not st["blocks"]:
+        return i18n("voice on (waiting for audio)")
+    # latency_ms is per-block processing time, not end-to-end delay (that is
+    # dominated by the chunk size).
+    budget = f"{st['latency_ms']:.0f}/{st['block_ms']:.0f} ms per block" if st["block_ms"] else f"{st['latency_ms']:.0f} ms/block"
+    return " · ".join([
+        "voice on",
+        f"mic {_level(st['input_db'])}",
+        f"out {_level(st['output_db'])}",
+        budget,
+        f"overruns {st['overruns']}",
+        f"dropouts {st['output_underflows']}",
+    ])
 
+
+callbacks_kwargs = {}
 CONFIG_PATH = os.path.join(now_dir, "assets", "config.json")
 
 
