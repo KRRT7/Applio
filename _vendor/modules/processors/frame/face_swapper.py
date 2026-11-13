@@ -19,7 +19,7 @@ from _vendor.modules.utilities import (
     is_video,
 )
 from _vendor.modules.cluster_analysis import find_closest_centroid
-from _vendor.modules.gpu_processing import gpu_gaussian_blur, gpu_sharpen, gpu_add_weighted, gpu_resize
+from _vendor.modules.gpu_processing import gpu_gaussian_blur, gpu_add_weighted, gpu_resize, cas_sharpen
 from _vendor.modules.platform_info import OPENVINO_PROVIDER_CONFIG
 import os
 from collections import deque
@@ -288,20 +288,44 @@ class HyperSwapper:
     which paste_swapped_face() uses for blending.
     """
 
+    MODEL_SIZE = 256
+
     def __init__(self, model_path: str, providers: list):
         import onnxruntime
 
         self.model_file = model_path
         self.session = onnxruntime.InferenceSession(model_path, providers=providers)
-        self.input_size = (256, 256)
 
-    def swap_aligned(self, source_face: Face, aimg: np.ndarray) -> np.ndarray:
-        blob = cv2.dnn.blobFromImage(aimg, 1.0 / 127.5, self.input_size, (127.5, 127.5, 127.5), swapRB=True)
-        embedding = source_face.normed_embedding.reshape((1, -1)).astype(np.float32)
+    @property
+    def input_size(self):
+        """Aligned-face size: 256, or 512 with pixel boost (read per call, so
+        the setting can change while live)."""
+        size = self.MODEL_SIZE * (2 if getattr(modules.globals, "swap_pixel_boost", False) else 1)
+        return (size, size)
+
+    def _run(self, embedding: np.ndarray, crop: np.ndarray):
+        blob = cv2.dnn.blobFromImage(crop, 1.0 / 127.5, (self.MODEL_SIZE, self.MODEL_SIZE),
+                                     (127.5, 127.5, 127.5), swapRB=True)
         out, mask = self.session.run(None, {"source": embedding, "target": blob})
         rgb = np.clip((out[0].transpose(1, 2, 0) + 1.0) * 127.5, 0, 255).astype(np.uint8)
         alpha = (np.clip(mask[0, 0], 0.0, 1.0) * 255).astype(np.uint8)
-        return np.ascontiguousarray(np.dstack([rgb[:, :, ::-1], alpha]))
+        return np.dstack([rgb[:, :, ::-1], alpha])
+
+    def swap_aligned(self, source_face: Face, aimg: np.ndarray) -> np.ndarray:
+        embedding = source_face.normed_embedding.reshape((1, -1)).astype(np.float32)
+        size = aimg.shape[0]
+        if size == self.MODEL_SIZE:
+            return np.ascontiguousarray(self._run(embedding, aimg))
+        # Pixel boost: split the larger crop into factor² sub-pixel-offset
+        # images of the model's size (each still a whole face), swap each,
+        # and interleave the results back (as FaceFusion's pixel boost does).
+        factor = size // self.MODEL_SIZE
+        out = np.empty((size, size, 4), dtype=np.uint8)
+        for dy in range(factor):
+            for dx in range(factor):
+                out[dy::factor, dx::factor] = self._run(
+                    embedding, np.ascontiguousarray(aimg[dy::factor, dx::factor]))
+        return out
 
     def get(self, img: Frame, target_face: Face, source_face: Face, paste_back: bool = False):
         kps = np.asarray(target_face.kps, dtype=np.float32)
@@ -423,7 +447,12 @@ def _get_soft_alpha(size: int) -> np.ndarray:
         axes = (int(size * 0.44), int(size * 0.44))
         mask = np.zeros((size, size), dtype=np.uint8)
         cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
-        mask = cv2.GaussianBlur(mask, (31, 31), 12)
+        # Feather tuned for 256 px faces; scaled up for larger crops (pixel
+        # boost) so the seam stays as soft relative to the face. 128/256 px
+        # are unchanged.
+        scale = max(1.0, size / 256.0)
+        k = int(31 * scale) | 1
+        mask = cv2.GaussianBlur(mask, (k, k), 12 * scale)
         _paste_cache['soft_alpha'] = mask  # uint8 [0, 255] — blended via cv2 SIMD ops
         _paste_cache['alpha_size'] = size
     return _paste_cache['soft_alpha']
@@ -988,10 +1017,9 @@ def apply_post_processing(current_frame: Frame, swapped_face_bboxes: List[np.nda
             if face_region.size == 0:
                 continue
 
-            # Apply sharpening (GPU-accelerated when CUDA OpenCV is available)
+            # Contrast-adaptive sharpening: less halo than an unsharp mask.
             try:
-                sigma = 2 if IS_APPLE_SILICON else 3
-                sharpened_region = gpu_sharpen(face_region, strength=sharpness_value, sigma=sigma)
+                sharpened_region = cas_sharpen(face_region, sharpness_value)
                 processed_frame[y1:y2, x1:x2] = sharpened_region
             except cv2.error:
                 pass

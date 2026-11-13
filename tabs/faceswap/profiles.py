@@ -23,7 +23,7 @@ import time
 
 PROFILES_DIR = os.path.join(os.getcwd(), "logs", "profiles")
 
-FACE_KEYS = ("swap_model", "enhancer", "mouth_mask", "sharpness", "color_correction")
+FACE_KEYS = ("swap_model", "enhancer", "mouth_mask", "sharpness", "color_correction", "pixel_boost")
 VOICE_KEYS = ("model_file", "index_file", "pitch", "index_rate", "protect", "f0_method")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 

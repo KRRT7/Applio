@@ -10,7 +10,7 @@ codebase never has to care whether CUDA is available.
 Usage
 -----
     from _vendor.modules.gpu_processing import (
-        gpu_gaussian_blur, gpu_sharpen, gpu_add_weighted,
+        gpu_gaussian_blur, gpu_sharpen, gpu_add_weighted, cas_sharpen,
         gpu_resize, gpu_cvt_color, gpu_flip,
         is_gpu_accelerated,
     )
@@ -142,6 +142,30 @@ def gpu_add_weighted(
 # ---------------------------------------------------------------------------
 # Public API – Unsharp-mask sharpening
 # ---------------------------------------------------------------------------
+
+def cas_sharpen(src: np.ndarray, amount: float) -> np.ndarray:
+    """Contrast Adaptive Sharpening (after AMD FidelityFX CAS).
+
+    Sharpens each pixel against its 4 neighbours with a negative-lobe filter
+    whose strength adapts to local contrast: strong where detail is soft,
+    little at already-hard edges, so it adds far less halo than an unsharp
+    mask. ``amount`` 0..1 maps to FidelityFX's sharpness 0..1.
+    """
+    if amount <= 0:
+        return src
+    x = _ensure_uint8(src).astype(np.float32) * (1.0 / 255.0)
+    cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+    box = np.ones((3, 3), np.uint8)
+    # FidelityFX softens min/max by averaging the cross and 3x3 box extremes.
+    mn = 0.5 * (cv2.erode(x, cross) + cv2.erode(x, box))
+    mx = 0.5 * (cv2.dilate(x, cross) + cv2.dilate(x, box))
+    amp = np.sqrt(np.clip(np.minimum(mn, 1.0 - mx) / np.maximum(mx, 1e-5), 0.0, 1.0))
+    w = amp * (-1.0 / (8.0 - 3.0 * float(min(amount, 1.0))))  # peak: -1/8 .. -1/5
+    neighbours = cv2.filter2D(x, -1, np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], np.float32),
+                              borderType=cv2.BORDER_REFLECT)
+    out = (x + w * neighbours) / (1.0 + 4.0 * w)
+    return np.clip(out * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
 
 def gpu_sharpen(
     src: np.ndarray,

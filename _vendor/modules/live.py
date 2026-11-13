@@ -87,6 +87,9 @@ class LiveConfig:
     # raised identity similarity from 0.785 to 0.810 on held-out frames).
     source_paths: Sequence[str] = ()
     swap_model: str = "hyperswap_1c_256"    # see SWAP_MODELS; fastest + best on Apple Silicon in our benchmark
+    # HyperSwap only: swap at 512 px as four 256 px sub-pixel passes. Sharper
+    # face; the swap costs ~4x.
+    pixel_boost: bool = False
     enhancer: Optional[str] = None          # None | "gfpgan" | "gpen256" | "gpen512"
     execution_providers: Sequence[str] = field(
         default_factory=lambda: [suggest_default_execution_provider()]
@@ -144,6 +147,7 @@ def configure(config: LiveConfig) -> None:
     g.source_paths = new_paths
     g.source_path = g.source_paths[0] if g.source_paths else None
     g.swap_model = config.swap_model
+    g.swap_pixel_boost = bool(config.pixel_boost)
     g.target_path = None
     g.map_faces = False
     g.many_faces = config.many_faces
