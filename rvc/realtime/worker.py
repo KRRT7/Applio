@@ -13,6 +13,12 @@ from rvc.realtime.core import VoiceChanger, AUDIO_SAMPLE_RATE
 def _worker_loop(vc_kwargs, input_q, output_q, config_q, stop_evt, ready_evt):
     """Entry point for the voice conversion worker process."""
 
+    # Windows: keep inference ahead of the audio device under load.
+    from rvc.lib import win_rt
+
+    win_rt.boost_process()
+    win_rt.boost_thread(win_rt.PRO_AUDIO)
+
     try:
         vc = VoiceChanger(**vc_kwargs)
         vc.warmup(index_rate=vc_kwargs.get("index_rate", 0))

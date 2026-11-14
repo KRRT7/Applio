@@ -610,8 +610,12 @@ class LiveSession:
         fps: int = 60,
         sinks: Sequence[FrameSink] = (),
         capture_factory: Callable[[int], VideoCapturer] = VideoCapturer,
+        thread_hint: Optional[Callable[[str], None]] = None,
     ):
         self.camera_index = camera_index
+        # Called on each worker thread as it starts, with "capture", "detect"
+        # or "process", so the host can raise its scheduling priority.
+        self._thread_hint = thread_hint
         self.requested = (width, height, fps)
         self.sinks: List[FrameSink] = list(sinks)
         self._capture_factory = capture_factory
@@ -702,7 +706,15 @@ class LiveSession:
 
     # threads
 
+    def _hint(self, role: str) -> None:
+        if self._thread_hint is not None:
+            try:
+                self._thread_hint(role)
+            except Exception:
+                pass  # a scheduling hint must never stop the session
+
     def _capture_loop(self) -> None:
+        self._hint("capture")
         while not self._stop.is_set():
             ret, frame = self._cap.read()
             if not ret:
@@ -717,6 +729,7 @@ class LiveSession:
         self._stop.set()
 
     def _detect_loop(self) -> None:
+        self._hint("detect")
         while not self._stop.is_set():
             try:
                 frame = self._capture_q.get(timeout=0.05)
@@ -737,6 +750,7 @@ class LiveSession:
                     continue
 
     def _process_loop(self) -> None:
+        self._hint("process")
         while not self._stop.is_set():
             try:
                 det = self._detect_q.get(timeout=0.05)

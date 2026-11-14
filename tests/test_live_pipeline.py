@@ -273,6 +273,27 @@ def test_stop_joins_threads_and_releases_everything(clean_globals, no_faces):
     assert caps[0].released and closed == [True]
 
 
+def test_thread_hint_runs_on_each_worker_thread_and_cannot_break_it(clean_globals, no_faces):
+    g.source_path, g.map_faces = None, False
+    seen, received = {}, []
+
+    class Fast(_StubCapture):
+        read_delay = 0.01
+
+    def hint(role):
+        seen[role] = threading.current_thread().name
+        raise OSError("hint failed")  # must be swallowed
+
+    session = live.LiveSession(0, sinks=[received.append], capture_factory=Fast, thread_hint=hint)
+    session.start()
+    deadline = time.time() + 5
+    while not received and time.time() < deadline:
+        time.sleep(0.02)
+    session.stop()
+    assert received and session.error is None
+    assert seen == {"capture": "dlc-capture", "detect": "dlc-detect", "process": "dlc-process"}
+
+
 def test_failed_camera_start_raises_and_releases(clean_globals, no_faces):
     caps = []
 

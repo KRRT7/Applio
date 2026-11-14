@@ -29,11 +29,9 @@ dependencies = [
     "uvicorn>=0.30.0",
     "fastapi>=0.110.0",
     "websockets>=13.0",
+    # The CUDA and cuDNN DLLs it needs come from torch (cu128 wheel, torch/lib);
+    # ort.preload_dlls() and `import torch` both load them from there.
     "onnxruntime-gpu==1.22.0; sys_platform == 'win32'",
-    "nvidia-cublas-cu12==12.9.2.10; sys_platform == 'win32'",
-    "nvidia-cuda-runtime-cu12==12.9.79; sys_platform == 'win32'",
-    "nvidia-cudnn-cu12==9.26.0.51; sys_platform == 'win32'",
-    "nvidia-cufft-cu12==11.4.1.4; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
@@ -62,7 +60,7 @@ dev = [
 # Applio runs from the source tree (app.py / core.py); it is not an installable package.
 package = false
 default-groups = ["ui", "faceswap"]
-# Resolve each OS separately: Windows pins its own CUDA runtime wheels for onnxruntime-gpu.
+# Resolve each OS separately: Windows uses onnxruntime-gpu, the others onnxruntime.
 environments = [
     "sys_platform == 'win32'",
     "sys_platform == 'linux'",
