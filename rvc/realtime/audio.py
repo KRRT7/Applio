@@ -10,6 +10,7 @@ from dataclasses import dataclass
 now_dir = os.getcwd()
 sys.path.append(now_dir)
 
+from rvc.lib import win_rt
 from rvc.realtime.core import AUDIO_SAMPLE_RATE
 
 
@@ -251,6 +252,7 @@ class Audio:
     def audio_stream_no_output_callback(
         self, indata: np.ndarray, frames, times, status
     ):
+        win_rt.boost_thread(win_rt.PRO_AUDIO)
         if not self.running:
             return
         self._note_status(status)
@@ -269,6 +271,7 @@ class Audio:
     def audio_stream_callback(
         self, indata: np.ndarray, outdata: np.ndarray, frames, times, status
     ):
+        win_rt.boost_thread(win_rt.PRO_AUDIO)
         if not self.running:
             outdata.fill(0)
             return
@@ -291,6 +294,7 @@ class Audio:
             print(traceback.format_exc())
 
     def audio_queue(self, q: Queue, outdata: np.ndarray, gain: float):
+        win_rt.boost_thread(win_rt.PRO_AUDIO)
         if not self.running:
             outdata.fill(0)
             return
