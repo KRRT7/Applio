@@ -57,10 +57,7 @@ By using the official version of Applio, you accept full responsibility for comp
 
 ### 1. Installation
 
-Run the installation script based on your operating system:
-
-- **Windows:** Double-click `run-install.bat`.
-- **Linux/macOS:** Execute `run-install.sh`.
+Install [uv](https://docs.astral.sh/uv/), then run `uv sync` in the Applio folder.
 
 ### 2. Running Applio
 
@@ -71,11 +68,6 @@ Start Applio using:
 
 This launches the Gradio interface in your default browser.
 
-For compiled Windows releases, close Applio and run `run-updater.bat` to install
-the latest release while preserving models, logs, audio, presets and settings.
-Older builds can add the updater once by extracting `ApplioUpdater.zip` from
-the GitHub release assets into their existing folder.
-
 ### Development Setup
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/) via `pyproject.toml` and `uv.lock`:
@@ -85,9 +77,6 @@ uv sync               # create .venv with the locked dependencies (CUDA PyTorch 
 uv run app.py --open  # launch the interface
 uv run core.py --help # use the CLI
 ```
-
-After changing dependencies (`uv add` / `uv lock`), run `make requirements` to regenerate
-`requirements.txt` and `requirements-engine.txt`, which the Windows compiled build and updater still install from.
 
 For more detailed instructions, visit the [documentation](https://docs.applio.org).
 
