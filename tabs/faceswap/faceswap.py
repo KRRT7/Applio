@@ -22,6 +22,7 @@ sys.path.append(now_dir)
 
 from assets.app_shell import step_card
 from assets.i18n.i18n import I18nAuto
+from rvc.lib import win_rt
 
 i18n = I18nAuto()
 
@@ -207,12 +208,23 @@ def estimate_voice_delay(chunk_size_ms, cross_fade_s):
     return int(round(max(0.0, voice - _VIDEO_OWN_LATENCY_MS) / 10) * 10)
 
 
+# Live threads -> MMCSS task (Windows only; no-op elsewhere).
+_THREAD_TASKS = {"capture": win_rt.CAPTURE, "detect": win_rt.GAMES, "process": win_rt.GAMES}
+_PRIORITY = None  # priority class to restore when the session stops
+
+
+def _thread_hint(role):
+    win_rt.boost_thread(_THREAD_TASKS.get(role, win_rt.GAMES))
+
+
 def _stop_session():
-    global _SESSION, _VCAM
+    global _SESSION, _VCAM, _PRIORITY
     with _LOCK:
         session, _SESSION, _VCAM = _SESSION, None, None
+        priority, _PRIORITY = _PRIORITY, None
     if session is not None:
         session.stop()
+    win_rt.restore_process(priority)
 
 
 _QUALITY_NAMES = ["swap model", "pixel boost", "enhancer", "detection size", "mouth mask", "sharpness",
@@ -236,7 +248,7 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
 
     Every step and failure is written to the activity log shown in Status.
     """
-    global _SESSION, _VCAM
+    global _SESSION, _VCAM, _PRIORITY
     paths = _source_paths(source)
     settings = ", ".join(f"{n} {v}" for n, v in zip(_QUALITY_NAMES, quality))
     _log(f"Face: starting | {len(paths)} source photo(s) | camera {camera} | {resolution} | "
@@ -263,7 +275,8 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
         index = int(str(camera).split(":", 1)[0])
         width, height = (int(v) for v in resolution.split("x"))
         vcam = dlc.DelayedSink(dlc.VirtualCameraSink(), float(video_delay or 0)) if virtual_camera else None
-        session = dlc.LiveSession(index, width, height, sinks=[vcam] if vcam else [])
+        session = dlc.LiveSession(index, width, height, sinks=[vcam] if vcam else [],
+                                  thread_hint=_thread_hint)
         _log("Face: loading models (the first start compiles them, ~10-20 s)...")
         yield _status_text(), gr.Timer(active=False)
         t0 = time.monotonic()
@@ -277,6 +290,7 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
             return
         with _LOCK:
             _SESSION, _VCAM = session, vcam
+            _PRIORITY = win_rt.boost_process()
         w, h = session.camera_size
         _log(f"Face: live | camera running at {w}x{h}@{session.camera_fps:.0f}fps")
     except gr.Error as exc:
