@@ -53,12 +53,16 @@ class VideoCapturer:
                 # falls back to uncompressed YUYV at 1080p, which is USB-
                 # bandwidth-limited to ~5 fps. Setting MJPG at construction
                 # negotiates compressed frames from the first read.
-                mjpg = cv2.VideoWriter_fourcc(*'MJPG')
+                mjpg = cv2.VideoWriter_fourcc(*"MJPG")
                 open_params = [
-                    cv2.CAP_PROP_FOURCC, mjpg,
-                    cv2.CAP_PROP_FRAME_WIDTH, width,
-                    cv2.CAP_PROP_FRAME_HEIGHT, height,
-                    cv2.CAP_PROP_FPS, fps,
+                    cv2.CAP_PROP_FOURCC,
+                    mjpg,
+                    cv2.CAP_PROP_FRAME_WIDTH,
+                    width,
+                    cv2.CAP_PROP_FRAME_HEIGHT,
+                    height,
+                    cv2.CAP_PROP_FPS,
+                    fps,
                 ]
                 capture_methods = [
                     (self.device_index, cv2.CAP_DSHOW),
@@ -86,7 +90,7 @@ class VideoCapturer:
             # post-open changes (MSMF, V4L2). DSHOW ignores these, but the
             # construction params above already handled it.
             if platform.system() != "Windows":
-                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                 self.cap.set(cv2.CAP_PROP_FPS, fps)
@@ -99,12 +103,15 @@ class VideoCapturer:
             # even when the camera delivers 60.  Measure empirically by
             # timing a burst of frames.
             reported_fps = self.cap.get(cv2.CAP_PROP_FPS)
-            self.actual_fps = self._measure_fps(warmup=10, sample=30,
-                                                fallback=reported_fps or fps)
+            self.actual_fps = self._measure_fps(
+                warmup=10, sample=30, fallback=reported_fps or fps
+            )
 
-            print(f"[VideoCapturer] {self.actual_width}x{self.actual_height} "
-                  f"@ {self.actual_fps:.1f}fps (reported={reported_fps:.0f})",
-                  flush=True)
+            print(
+                f"[VideoCapturer] {self.actual_width}x{self.actual_height} "
+                f"@ {self.actual_fps:.1f}fps (reported={reported_fps:.0f})",
+                flush=True,
+            )
 
             self.is_running = True
             return True
@@ -135,8 +142,9 @@ class VideoCapturer:
             self.is_running = False
             self.cap = None
 
-    def _measure_fps(self, warmup: int = 10, sample: int = 30,
-                     fallback: float = 30.0) -> float:
+    def _measure_fps(
+        self, warmup: int = 10, sample: int = 30, fallback: float = 30.0
+    ) -> float:
         """Read warmup+sample frames and return measured FPS.
 
         This is more reliable than CAP_PROP_FPS which often lies on

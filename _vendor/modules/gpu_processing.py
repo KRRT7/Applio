@@ -44,7 +44,9 @@ if os.environ.get("OPENCV_CUDA_PROCESSING") == "1":
         _has_cvt = hasattr(cv2.cuda, "cvtColor")
         if _has_gauss and _has_resize and _has_cvt:
             CUDA_AVAILABLE = True
-            print("[gpu_processing] OpenCV CUDA processing enabled via OPENCV_CUDA_PROCESSING=1.")
+            print(
+                "[gpu_processing] OpenCV CUDA processing enabled via OPENCV_CUDA_PROCESSING=1."
+            )
     except Exception:
         pass
 
@@ -52,6 +54,7 @@ if os.environ.get("OPENCV_CUDA_PROCESSING") == "1":
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _ensure_uint8(img: np.ndarray) -> np.ndarray:
     """Clip and convert to uint8 if necessary."""
@@ -83,6 +86,7 @@ def _cv_type_for(img: np.ndarray) -> int:
 # Public API – Gaussian Blur
 # ---------------------------------------------------------------------------
 
+
 def gpu_gaussian_blur(
     src: np.ndarray,
     ksize: Tuple[int, int],
@@ -100,7 +104,9 @@ def gpu_gaussian_blur(
             cv_type = _cv_type_for(src_u8)
             ks = _ksize_odd(ksize) if ksize != (0, 0) else ksize
 
-            gauss = cv2.cuda.createGaussianFilter(cv_type, cv_type, ks, sigma_x, sigma_y)
+            gauss = cv2.cuda.createGaussianFilter(
+                cv_type, cv_type, ks, sigma_x, sigma_y
+            )
             gpu_src = cv2.cuda.GpuMat()
             gpu_src.upload(src_u8)
             gpu_dst = gauss.apply(gpu_src)
@@ -114,6 +120,7 @@ def gpu_gaussian_blur(
 # ---------------------------------------------------------------------------
 # Public API – addWeighted
 # ---------------------------------------------------------------------------
+
 
 def gpu_add_weighted(
     src1: np.ndarray,
@@ -143,6 +150,7 @@ def gpu_add_weighted(
 # Public API – Unsharp-mask sharpening
 # ---------------------------------------------------------------------------
 
+
 def cas_sharpen(src: np.ndarray, amount: float) -> np.ndarray:
     """Contrast Adaptive Sharpening (after AMD FidelityFX CAS).
 
@@ -161,8 +169,12 @@ def cas_sharpen(src: np.ndarray, amount: float) -> np.ndarray:
     mx = 0.5 * (cv2.dilate(x, cross) + cv2.dilate(x, box))
     amp = np.sqrt(np.clip(np.minimum(mn, 1.0 - mx) / np.maximum(mx, 1e-5), 0.0, 1.0))
     w = amp * (-1.0 / (8.0 - 3.0 * float(min(amount, 1.0))))  # peak: -1/8 .. -1/5
-    neighbours = cv2.filter2D(x, -1, np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], np.float32),
-                              borderType=cv2.BORDER_REFLECT)
+    neighbours = cv2.filter2D(
+        x,
+        -1,
+        np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], np.float32),
+        borderType=cv2.BORDER_REFLECT,
+    )
     out = (x + w * neighbours) / (1.0 + 4.0 * w)
     return np.clip(out * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
@@ -191,7 +203,9 @@ def gpu_sharpen(
             gpu_src = cv2.cuda.GpuMat()
             gpu_src.upload(src_u8)
             gpu_blurred = gauss.apply(gpu_src)
-            gpu_sharp = cv2.cuda.addWeighted(gpu_src, 1.0 + strength, gpu_blurred, -strength, 0)
+            gpu_sharp = cv2.cuda.addWeighted(
+                gpu_src, 1.0 + strength, gpu_blurred, -strength, 0
+            )
             result = gpu_sharp.download()
             return np.clip(result, 0, 255).astype(np.uint8)
         except cv2.error:
@@ -238,7 +252,9 @@ def gpu_resize(
             if dsize and dsize[0] > 0 and dsize[1] > 0:
                 gpu_dst = cv2.cuda.resize(gpu_src, dsize, interpolation=interp)
             else:
-                gpu_dst = cv2.cuda.resize(gpu_src, (0, 0), fx=fx, fy=fy, interpolation=interp)
+                gpu_dst = cv2.cuda.resize(
+                    gpu_src, (0, 0), fx=fx, fy=fy, interpolation=interp
+                )
 
             return gpu_dst.download()
         except cv2.error:
@@ -250,6 +266,7 @@ def gpu_resize(
 # ---------------------------------------------------------------------------
 # Public API – Color conversion
 # ---------------------------------------------------------------------------
+
 
 def gpu_cvt_color(
     src: np.ndarray,
@@ -275,6 +292,7 @@ def gpu_cvt_color(
 # ---------------------------------------------------------------------------
 # Public API – Flip
 # ---------------------------------------------------------------------------
+
 
 def gpu_flip(
     src: np.ndarray,
@@ -302,8 +320,10 @@ def gpu_flip(
 # Convenience: check at runtime whether GPU path is active
 # ---------------------------------------------------------------------------
 
+
 def is_gpu_accelerated() -> bool:
     """Return ``True`` when the CUDA path will be used."""
     return CUDA_AVAILABLE
+
 
 # --- END OF FILE gpu_processing.py ---

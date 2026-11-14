@@ -45,14 +45,16 @@ def build_provider_config(providers=None):
             # architectures.
             config.append(p)
         elif p == "CoreMLExecutionProvider" and IS_APPLE_SILICON:
-            config.append((
-                "CoreMLExecutionProvider",
-                {
-                    "ModelFormat": "MLProgram",
-                    "MLComputeUnits": "ALL",
-                    "AllowLowPrecisionAccumulationOnGPU": 1,
-                },
-            ))
+            config.append(
+                (
+                    "CoreMLExecutionProvider",
+                    {
+                        "ModelFormat": "MLProgram",
+                        "MLComputeUnits": "ALL",
+                        "AllowLowPrecisionAccumulationOnGPU": 1,
+                    },
+                )
+            )
         elif p == "OpenVINOExecutionProvider":
             # AUTO lets OpenVINO select the best device
             config.append(OPENVINO_PROVIDER_CONFIG)
@@ -61,9 +63,9 @@ def build_provider_config(providers=None):
     return config
 
 
-def run_inference(session: onnxruntime.InferenceSession,
-                  input_name: str,
-                  input_tensor: "np.ndarray") -> "np.ndarray":
+def run_inference(
+    session: onnxruntime.InferenceSession, input_name: str, input_tensor: "np.ndarray"
+) -> "np.ndarray":
     """Run ONNX inference, using IO binding when a CUDA session is active.
 
     IO binding avoids redundant host↔device copies by transferring the
@@ -77,7 +79,9 @@ def run_inference(session: onnxruntime.InferenceSession,
 
             # Input: numpy → GPU
             ort_input = onnxruntime.OrtValue.ortvalue_from_numpy(
-                input_tensor, "cuda", 0,
+                input_tensor,
+                "cuda",
+                0,
             )
             io_binding.bind_ortvalue_input(input_name, ort_input)
 
@@ -105,9 +109,11 @@ def create_onnx_session(model_path: str) -> onnxruntime.InferenceSession:
     """
     if IS_APPLE_SILICON:
         from _vendor.modules.onnx_optimize import optimize_for_coreml
+
         # Infer input shape from the model for Shape/Gather folding
         try:
             import onnx
+
             m = onnx.load(model_path)
             inp = m.graph.input[0]
             dims = inp.type.tensor_type.shape.dim
@@ -123,7 +129,9 @@ def create_onnx_session(model_path: str) -> onnxruntime.InferenceSession:
         onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
     )
     session = onnxruntime.InferenceSession(
-        model_path, sess_options=session_options, providers=providers,
+        model_path,
+        sess_options=session_options,
+        providers=providers,
     )
     return session
 
@@ -148,7 +156,9 @@ def preprocess_face(face_img: np.ndarray, input_size: int) -> np.ndarray:
 
     GPEN-BFR expects [1, 3, H, W] float32 in RGB, normalized to [-1, 1].
     """
-    resized = cv2.resize(face_img, (input_size, input_size), interpolation=cv2.INTER_LINEAR)
+    resized = cv2.resize(
+        face_img, (input_size, input_size), interpolation=cv2.INTER_LINEAR
+    )
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     blob = rgb.astype(np.float32) / 255.0 * 2.0 - 1.0
     blob = np.transpose(blob, (2, 0, 1))[np.newaxis, ...]
@@ -158,7 +168,7 @@ def preprocess_face(face_img: np.ndarray, input_size: int) -> np.ndarray:
 def postprocess_face(output: np.ndarray) -> np.ndarray:
     """Convert ONNX output [1, 3, H, W] float32 back to BGR uint8 image."""
     img = output[0].transpose(1, 2, 0)
-    img = ((img + 1.0) / 2.0 * 255.0)
+    img = (img + 1.0) / 2.0 * 255.0
     img = np.clip(img, 0, 255).astype(np.uint8)
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     return img
@@ -169,26 +179,35 @@ def _get_face_affine(face: Any, input_size: int):
 
     Returns (M, inv_M) — forward and inverse affine matrices.
     """
-    template = np.array([
-        [0.31556875, 0.4615741],
-        [0.68262291, 0.4615741],
-        [0.50009375, 0.6405054],
-        [0.34947187, 0.8246919],
-        [0.65343645, 0.8246919],
-    ], dtype=np.float32) * input_size
+    template = (
+        np.array(
+            [
+                [0.31556875, 0.4615741],
+                [0.68262291, 0.4615741],
+                [0.50009375, 0.6405054],
+                [0.34947187, 0.8246919],
+                [0.65343645, 0.8246919],
+            ],
+            dtype=np.float32,
+        )
+        * input_size
+    )
 
     landmarks = None
     if hasattr(face, "kps") and face.kps is not None:
         landmarks = face.kps.astype(np.float32)
     elif hasattr(face, "landmark_2d_106") and face.landmark_2d_106 is not None:
         lm106 = face.landmark_2d_106
-        landmarks = np.array([
-            lm106[38],  # left eye
-            lm106[88],  # right eye
-            lm106[86],  # nose tip
-            lm106[52],  # left mouth
-            lm106[61],  # right mouth
-        ], dtype=np.float32)
+        landmarks = np.array(
+            [
+                lm106[38],  # left eye
+                lm106[88],  # right eye
+                lm106[86],  # nose tip
+                lm106[52],  # left mouth
+                lm106[61],  # right mouth
+            ],
+            dtype=np.float32,
+        )
 
     if landmarks is None or len(landmarks) < 5:
         return None, None
@@ -211,15 +230,20 @@ def _feather_mask(size: int) -> np.ndarray:
         border = max(1, size // 16)
         m[:border, :] = np.linspace(0, 1, border)[:, np.newaxis]
         m[-border:, :] = np.linspace(1, 0, border)[:, np.newaxis]
-        m[:, :border] = np.minimum(m[:, :border], np.linspace(0, 1, border)[np.newaxis, :])
-        m[:, -border:] = np.minimum(m[:, -border:], np.linspace(1, 0, border)[np.newaxis, :])
+        m[:, :border] = np.minimum(
+            m[:, :border], np.linspace(0, 1, border)[np.newaxis, :]
+        )
+        m[:, -border:] = np.minimum(
+            m[:, -border:], np.linspace(1, 0, border)[np.newaxis, :]
+        )
         mask = np.round(m * 255.0).astype(np.uint8)
         _MASK_CACHE[size] = mask
     return mask
 
 
-def _paste_back(frame: np.ndarray, enhanced: np.ndarray, inv_M: np.ndarray,
-                mask: np.ndarray) -> np.ndarray:
+def _paste_back(
+    frame: np.ndarray, enhanced: np.ndarray, inv_M: np.ndarray, mask: np.ndarray
+) -> np.ndarray:
     """Blend ``enhanced`` (aligned face) back into a copy of ``frame``.
 
     Works only on the face's bounding box in frame coordinates and blends
@@ -241,14 +265,28 @@ def _paste_back(frame: np.ndarray, enhanced: np.ndarray, inv_M: np.ndarray,
     inv_crop[0, 2] -= x1
     inv_crop[1, 2] -= y1
     crop_size = (x2 - x1, y2 - y1)
-    face = cv2.warpAffine(enhanced, inv_crop, crop_size, flags=cv2.INTER_LINEAR,
-                          borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-    alpha = cv2.warpAffine(mask, inv_crop, crop_size, flags=cv2.INTER_LINEAR,
-                           borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    face = cv2.warpAffine(
+        enhanced,
+        inv_crop,
+        crop_size,
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0),
+    )
+    alpha = cv2.warpAffine(
+        mask,
+        inv_crop,
+        crop_size,
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
     alpha3 = cv2.merge([alpha, alpha, alpha])
     roi = frame[y1:y2, x1:x2]
-    blended = cv2.add(cv2.multiply(face, alpha3, scale=1.0 / 255.0),
-                      cv2.multiply(roi, 255 - alpha3, scale=1.0 / 255.0))
+    blended = cv2.add(
+        cv2.multiply(face, alpha3, scale=1.0 / 255.0),
+        cv2.multiply(roi, 255 - alpha3, scale=1.0 / 255.0),
+    )
     result = frame.copy()
     result[y1:y2, x1:x2] = blended
     return result
@@ -266,8 +304,11 @@ def enhance_face_onnx(
         return frame
 
     face_crop = cv2.warpAffine(
-        frame, M, (input_size, input_size),
-        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
+        frame,
+        M,
+        (input_size, input_size),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
     )
 
     blob = preprocess_face(face_crop, input_size)

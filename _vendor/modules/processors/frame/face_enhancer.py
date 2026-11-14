@@ -96,9 +96,7 @@ def get_face_enhancer() -> onnxruntime.InferenceSession:
                 input_info = FACE_ENHANCER.get_inputs()[0]
                 output_info = FACE_ENHANCER.get_outputs()[0]
                 active_providers = FACE_ENHANCER.get_providers()
-                print(
-                    f"{NAME}: GFPGAN ONNX model loaded successfully."
-                )
+                print(f"{NAME}: GFPGAN ONNX model loaded successfully.")
                 print(
                     f"{NAME}: Input: {input_info.name}, "
                     f"shape: {input_info.shape}, type: {input_info.type}"
@@ -112,9 +110,7 @@ def get_face_enhancer() -> onnxruntime.InferenceSession:
             except Exception as e:
                 print(f"{NAME}: Error loading GFPGAN ONNX model: {e}")
                 FACE_ENHANCER = None
-                raise RuntimeError(
-                    f"{NAME}: Failed to load GFPGAN ONNX model: {e}"
-                )
+                raise RuntimeError(f"{NAME}: Failed to load GFPGAN ONNX model: {e}")
 
     if FACE_ENHANCER is None:
         raise RuntimeError(
@@ -124,9 +120,7 @@ def get_face_enhancer() -> onnxruntime.InferenceSession:
     return FACE_ENHANCER
 
 
-def _align_face(
-    frame: Frame, landmarks_5: np.ndarray, output_size: int
-) -> tuple:
+def _align_face(frame: Frame, landmarks_5: np.ndarray, output_size: int) -> tuple:
     """
     Align and crop a face from the frame using 5-point landmarks and the
     standard FFHQ template.
@@ -160,13 +154,14 @@ def _align_face(
 _HAS_TORCH_CUDA = False
 try:
     import torch
+
     if torch.cuda.is_available():
         _HAS_TORCH_CUDA = True
 except ImportError:
     pass
 
 # Cache the feathered mask — it's the same for every call at a given size
-_enhancer_cache: dict = {'mask': None, 'mask_size': 0}
+_enhancer_cache: dict = {"mask": None, "mask_size": 0}
 
 
 def _paste_back(
@@ -186,7 +181,7 @@ def _paste_back(
     inv_matrix = cv2.invertAffineTransform(affine_matrix)
 
     # Build or reuse cached feathered mask (uint8 — blended via cv2 SIMD ops)
-    if _enhancer_cache['mask_size'] != output_size:
+    if _enhancer_cache["mask_size"] != output_size:
         face_mask_f = np.ones((output_size, output_size), dtype=np.float32)
         border = max(1, int(output_size * 0.05))
         ramp_up = np.linspace(0.0, 1.0, border, dtype=np.float32)
@@ -195,13 +190,14 @@ def _paste_back(
         face_mask_f[-border:, :] *= ramp_down[:, None]
         face_mask_f[:, :border] *= ramp_up[None, :]
         face_mask_f[:, -border:] *= ramp_down[None, :]
-        _enhancer_cache['mask'] = (face_mask_f * 255.0).astype(np.uint8)
-        _enhancer_cache['mask_size'] = output_size
+        _enhancer_cache["mask"] = (face_mask_f * 255.0).astype(np.uint8)
+        _enhancer_cache["mask_size"] = output_size
 
     # Compute tight bbox from affine corners (avoids full-frame warpAffine scan)
-    corners = np.array([[0, 0], [output_size, 0],
-                        [output_size, output_size], [0, output_size]],
-                       dtype=np.float32)
+    corners = np.array(
+        [[0, 0], [output_size, 0], [output_size, output_size], [0, output_size]],
+        dtype=np.float32,
+    )
     transformed = (inv_matrix[:, :2] @ corners.T).T + inv_matrix[:, 2]
     x1 = max(0, int(np.floor(transformed[:, 0].min())))
     x2 = min(w, int(np.ceil(transformed[:, 0].max())))
@@ -222,23 +218,39 @@ def _paste_back(
     inv_crop[1, 2] -= y1p
 
     inv_restored_crop = cv2.warpAffine(
-        enhanced_face, inv_crop, (crop_w, crop_h),
-        borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0),
+        enhanced_face,
+        inv_crop,
+        (crop_w, crop_h),
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0),
     )
     inv_mask_crop = cv2.warpAffine(
-        _enhancer_cache['mask'], inv_crop, (crop_w, crop_h),
-        borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+        _enhancer_cache["mask"],
+        inv_crop,
+        (crop_w, crop_h),
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
     )
 
     target_crop = frame[y1p:y2p, x1p:x2p]
 
     if _HAS_TORCH_CUDA:
         # Upload uint8 alpha — smaller transfer, scale on device.
-        mask_t = torch.from_numpy(inv_mask_crop).cuda().float().mul_(1.0 / 255.0).unsqueeze(2)
+        mask_t = (
+            torch.from_numpy(inv_mask_crop)
+            .cuda()
+            .float()
+            .mul_(1.0 / 255.0)
+            .unsqueeze(2)
+        )
         enhanced_t = torch.from_numpy(inv_restored_crop).float().cuda()
         target_t = torch.from_numpy(target_crop).float().cuda()
-        blended = (mask_t * enhanced_t + (1.0 - mask_t) * target_t
-                   ).to(torch.uint8).cpu().numpy()
+        blended = (
+            (mask_t * enhanced_t + (1.0 - mask_t) * target_t)
+            .to(torch.uint8)
+            .cpu()
+            .numpy()
+        )
         frame[y1p:y2p, x1p:x2p] = blended
     else:
         # Fused uint8 blend via cv2 SIMD — ~7× faster than the float32 round-trip.
@@ -260,7 +272,7 @@ def _preprocess_face(aligned_face: np.ndarray) -> np.ndarray:
     # Fused: (x / 255.0 - 0.5) / 0.5 = x / 127.5 - 1.0
     rgb = aligned_face[:, :, ::-1]  # BGR->RGB zero-copy view
     chw = np.transpose(rgb, (2, 0, 1)).astype(np.float32)
-    chw *= (1.0 / 127.5)
+    chw *= 1.0 / 127.5
     chw -= 1.0
     return chw[np.newaxis, ...]  # shape: (1, 3, H, W)
 
@@ -283,10 +295,10 @@ def _postprocess_face(output: np.ndarray) -> np.ndarray:
 # same position), so we run inference every _ENH_INTERVAL frames and
 # reuse the cached enhanced face + affine matrix in between.
 _enh_live_cache: dict = {
-    'enhanced_bgr': None,
-    'affine_matrix': None,
-    'align_size': 0,
-    'frame_count': 0,
+    "enhanced_bgr": None,
+    "affine_matrix": None,
+    "align_size": 0,
+    "frame_count": 0,
 }
 _ENH_INTERVAL = 2  # run inference every N frames, paste cached result otherwise
 
@@ -325,9 +337,11 @@ def enhance_face(temp_frame: Frame, detected_faces=None) -> Frame:
     many_faces_mode = getattr(modules.globals, "many_faces", False)
     use_cache = detected_faces is not None and not many_faces_mode
     if use_cache:
-        _enh_live_cache['frame_count'] += 1
-        run_inference_this_frame = (_enh_live_cache['frame_count'] % _ENH_INTERVAL == 0
-                                   or _enh_live_cache['enhanced_bgr'] is None)
+        _enh_live_cache["frame_count"] += 1
+        run_inference_this_frame = (
+            _enh_live_cache["frame_count"] % _ENH_INTERVAL == 0
+            or _enh_live_cache["enhanced_bgr"] is None
+        )
     else:
         run_inference_this_frame = True
 
@@ -351,6 +365,7 @@ def enhance_face(temp_frame: Frame, detected_faces=None) -> Frame:
                     from _vendor.modules.processors.frame._onnx_enhancer import (
                         run_inference,
                     )
+
                     input_tensor = _preprocess_face(aligned_face)
                     output_tensor = run_inference(session, input_name, input_tensor)
                     enhanced_bgr = _postprocess_face(output_tensor)
@@ -365,9 +380,9 @@ def enhance_face(temp_frame: Frame, detected_faces=None) -> Frame:
 
                 # Cache for reuse on next frame
                 if use_cache:
-                    _enh_live_cache['enhanced_bgr'] = enhanced_bgr
-                    _enh_live_cache['affine_matrix'] = affine_matrix
-                    _enh_live_cache['align_size'] = align_size
+                    _enh_live_cache["enhanced_bgr"] = enhanced_bgr
+                    _enh_live_cache["affine_matrix"] = affine_matrix
+                    _enh_live_cache["align_size"] = align_size
 
                 _paste_back(
                     temp_frame, enhanced_bgr, affine_matrix, output_size=align_size
@@ -378,11 +393,12 @@ def enhance_face(temp_frame: Frame, detected_faces=None) -> Frame:
         else:
             # Reuse cached enhanced face — just paste back onto current frame
             cached = _enh_live_cache
-            if cached['enhanced_bgr'] is not None:
+            if cached["enhanced_bgr"] is not None:
                 _paste_back(
-                    temp_frame, cached['enhanced_bgr'],
-                    cached['affine_matrix'],
-                    output_size=cached['align_size'],
+                    temp_frame,
+                    cached["enhanced_bgr"],
+                    cached["affine_matrix"],
+                    output_size=cached["align_size"],
                 )
         if not many_faces_mode:
             break  # single-face live mode — only process first face
@@ -390,8 +406,9 @@ def enhance_face(temp_frame: Frame, detected_faces=None) -> Frame:
     return temp_frame
 
 
-def process_frame(source_face: Face | None, temp_frame: Frame,
-                   detected_faces=None) -> Frame:
+def process_frame(
+    source_face: Face | None, temp_frame: Frame, detected_faces=None
+) -> Frame:
     """Processes a frame: enhances face if detected."""
     return enhance_face(temp_frame, detected_faces=detected_faces)
 
@@ -407,18 +424,14 @@ def process_frames(
     """Processes multiple frames from file paths."""
     for temp_frame_path in temp_frame_paths:
         if not os.path.exists(temp_frame_path):
-            print(
-                f"{NAME}: Warning: Frame path not found {temp_frame_path}, skipping."
-            )
+            print(f"{NAME}: Warning: Frame path not found {temp_frame_path}, skipping.")
             if progress:
                 progress.update(1)
             continue
 
         temp_frame = imread_unicode(temp_frame_path)
         if temp_frame is None:
-            print(
-                f"{NAME}: Warning: Failed to read frame {temp_frame_path}, skipping."
-            )
+            print(f"{NAME}: Warning: Failed to read frame {temp_frame_path}, skipping.")
             if progress:
                 progress.update(1)
             continue
@@ -429,9 +442,7 @@ def process_frames(
             progress.update(1)
 
 
-def process_image(
-    source_path: str | None, target_path: str, output_path: str
-) -> None:
+def process_image(source_path: str | None, target_path: str, output_path: str) -> None:
     """Processes a single image file."""
     target_frame = imread_unicode(target_path)
     if target_frame is None:
@@ -442,9 +453,7 @@ def process_image(
     print(f"{NAME}: Enhanced image saved to {output_path}")
 
 
-def process_video(
-    source_path: str | None, temp_frame_paths: List[str]
-) -> None:
+def process_video(source_path: str | None, temp_frame_paths: List[str]) -> None:
     """Processes video frames using the frame processor core."""
     modules.processors.frame.core.process_video(
         source_path, temp_frame_paths, process_frames

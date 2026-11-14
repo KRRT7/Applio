@@ -65,7 +65,9 @@ def pre_check() -> bool:
 
 
 def pre_start() -> bool:
-    if not is_image(modules.globals.target_path) and not is_video(modules.globals.target_path):
+    if not is_image(modules.globals.target_path) and not is_video(
+        modules.globals.target_path
+    ):
         update_status("Select an image or video for target path.", NAME)
         return False
     return True
@@ -100,7 +102,9 @@ def enhance_face(temp_frame: Frame, face: Face) -> Frame:
         return temp_frame
 
 
-def process_frame(source_face: Face | None, temp_frame: Frame, detected_faces=None) -> Frame:
+def process_frame(
+    source_face: Face | None, temp_frame: Frame, detected_faces=None
+) -> Frame:
     if detected_faces:
         target_face = detected_faces[0]
     else:
@@ -143,4 +147,6 @@ def process_image(source_path: str | None, target_path: str, output_path: str) -
 
 
 def process_video(source_path: str | None, temp_frame_paths: List[str]) -> None:
-    modules.processors.frame.core.process_video(source_path, temp_frame_paths, process_frames)
+    modules.processors.frame.core.process_video(
+        source_path, temp_frame_paths, process_frames
+    )

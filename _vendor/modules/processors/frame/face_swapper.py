@@ -12,14 +12,23 @@ import _vendor.modules.processors.frame.core as _modules_frame_core  # noqa: F40
 from insightface.utils import face_align
 from _vendor.modules import imread_unicode, imwrite_unicode
 from _vendor.modules.status import update_status
-from _vendor.modules.face_analyser import get_one_face, get_many_faces, default_source_face
+from _vendor.modules.face_analyser import (
+    get_one_face,
+    get_many_faces,
+    default_source_face,
+)
 from _vendor.modules.typing import Face, Frame
 from _vendor.modules.utilities import (
     is_image,
     is_video,
 )
 from _vendor.modules.cluster_analysis import find_closest_centroid
-from _vendor.modules.gpu_processing import gpu_gaussian_blur, gpu_add_weighted, gpu_resize, cas_sharpen
+from _vendor.modules.gpu_processing import (
+    gpu_gaussian_blur,
+    gpu_add_weighted,
+    gpu_resize,
+    cas_sharpen,
+)
 from _vendor.modules.platform_info import OPENVINO_PROVIDER_CONFIG
 import os
 from collections import deque
@@ -34,10 +43,15 @@ NAME = "DLC.FACE-SWAPPER"
 #   inswapper_128      InsightFace, 128px aligned face.
 #   hyperswap_1x_256   FaceFusion Labs HyperSwap, 256px, also predicts an
 #                      occlusion-aware face mask used for blending.
-SWAP_MODELS = ("inswapper_128", "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256")
+SWAP_MODELS = (
+    "inswapper_128",
+    "hyperswap_1a_256",
+    "hyperswap_1b_256",
+    "hyperswap_1c_256",
+)
 
 # --- START: Added for Interpolation ---
-PREVIOUS_FRAME_RESULT = None # Stores the final processed frame from the previous step
+PREVIOUS_FRAME_RESULT = None  # Stores the final processed frame from the previous step
 # --- END: Added for Interpolation ---
 
 # --- Poisson blend (ported from deep-live-cam-gumroad-edition) ---
@@ -75,9 +89,13 @@ def _create_elliptical_mask(size: Tuple[int, int]) -> np.ndarray:
     return mask
 
 
-def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
-                         target_face: Face, affine_matrix: np.ndarray = None,
-                         bgr_fake: np.ndarray = None) -> Frame:
+def _apply_poisson_blend(
+    swapped_frame: Frame,
+    original_frame: Frame,
+    target_face: Face,
+    affine_matrix: np.ndarray = None,
+    bgr_fake: np.ndarray = None,
+) -> Frame:
     """Poisson-blend the swapped face onto the original frame.
 
     Preferred path derives the blend mask from the swap's inverse affine so
@@ -95,8 +113,9 @@ def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
                 h, w = swapped_frame.shape[:2]
                 fh, fw = bgr_fake.shape[:2]
                 inv = cv2.invertAffineTransform(affine_matrix)
-                corners = np.array([[0, 0, 1], [fw, 0, 1], [fw, fh, 1], [0, fh, 1]],
-                                   dtype=np.float32)
+                corners = np.array(
+                    [[0, 0, 1], [fw, 0, 1], [fw, fh, 1], [0, fh, 1]], dtype=np.float32
+                )
                 t = corners @ inv.T
                 px1 = max(0, int(np.floor(t[:, 0].min())))
                 py1 = max(0, int(np.floor(t[:, 1].min())))
@@ -108,13 +127,19 @@ def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
                     roi_aff[0, 2] -= px1
                     roi_aff[1, 2] -= py1
                     fm = _create_elliptical_mask((fh, fw))
-                    mroi = cv2.warpAffine(fm, roi_aff, (rw, rh),
-                                          flags=cv2.INTER_LINEAR,
-                                          borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+                    mroi = cv2.warpAffine(
+                        fm,
+                        roi_aff,
+                        (rw, rh),
+                        flags=cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=0,
+                    )
                     bin_roi = np.where(mroi > 0.5, np.uint8(255), np.uint8(0))
                     k = max(3, (min(rw, rh) // 20) | 1)
-                    bin_roi = cv2.erode(bin_roi,
-                                        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+                    bin_roi = cv2.erode(
+                        bin_roi, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+                    )
                     bx, by, bw, bh = cv2.boundingRect(bin_roi)
                     if bw > 0 and bh > 0:
                         mx1, my1 = px1 + bx, py1 + by
@@ -124,16 +149,25 @@ def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
                             mask = np.zeros((h, w), dtype=np.uint8)
                             mask[py1:py2, px1:px2] = bin_roi
                             center = (mx1 + bw // 2, my1 + bh // 2)
-                            blended = cv2.seamlessClone(swapped_frame, original_frame,
-                                                        mask, center, cv2.NORMAL_CLONE)
-                            np.copyto(swapped_frame[my1:my2 + 1, mx1:mx2 + 1],
-                                      blended[my1:my2 + 1, mx1:mx2 + 1],
-                                      where=mask[my1:my2 + 1, mx1:mx2 + 1, None].astype(bool))
+                            blended = cv2.seamlessClone(
+                                swapped_frame,
+                                original_frame,
+                                mask,
+                                center,
+                                cv2.NORMAL_CLONE,
+                            )
+                            np.copyto(
+                                swapped_frame[my1 : my2 + 1, mx1 : mx2 + 1],
+                                blended[my1 : my2 + 1, mx1 : mx2 + 1],
+                                where=mask[my1 : my2 + 1, mx1 : mx2 + 1, None].astype(
+                                    bool
+                                ),
+                            )
                             return swapped_frame
             except Exception:
                 pass  # fall through to the robust bbox-ellipse path below
         # ---- Fallback: bbox-ellipse (defensive, cached when still) ----
-        if not hasattr(target_face, 'bbox') or target_face.bbox is None:
+        if not hasattr(target_face, "bbox") or target_face.bbox is None:
             return swapped_frame
         x1, y1, x2, y2 = target_face.bbox.astype(int)
         h, w = swapped_frame.shape[:2]
@@ -153,7 +187,12 @@ def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
         if not (0 <= center_x < w and 0 <= center_y < h):
             return swapped_frame
         center = (center_x, center_y)
-        if center_x - radius_x < 0 or center_x + radius_x >= w or center_y - radius_y < 0 or (center_y + radius_y >= h):
+        if (
+            center_x - radius_x < 0
+            or center_x + radius_x >= w
+            or center_y - radius_y < 0
+            or (center_y + radius_y >= h)
+        ):
             return swapped_frame
         # Reuse cached mask when center/radius unchanged frame-to-frame
         # (face nearly still) — saves the np.zeros + cv2.ellipse, and the
@@ -168,7 +207,9 @@ def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
                 return swapped_frame
             _poisson_cached_mask = mask
             _poisson_cached_key = mask_key
-        blended = cv2.seamlessClone(swapped_frame, original_frame, mask, center, cv2.NORMAL_CLONE)
+        blended = cv2.seamlessClone(
+            swapped_frame, original_frame, mask, center, cv2.NORMAL_CLONE
+        )
         # Composite ONLY this face's ellipse back (ROI-bounded) so previously
         # blended faces in multi-face mode are preserved.
         rx0 = max(0, center_x - radius_x)
@@ -176,15 +217,18 @@ def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
         ry0 = max(0, center_y - radius_y)
         ry1 = min(h, center_y + radius_y + 1)
         roi_mask = mask[ry0:ry1, rx0:rx1]
-        np.copyto(swapped_frame[ry0:ry1, rx0:rx1],
-                  blended[ry0:ry1, rx0:rx1],
-                  where=roi_mask[:, :, None].astype(bool))
+        np.copyto(
+            swapped_frame[ry0:ry1, rx0:rx1],
+            blended[ry0:ry1, rx0:rx1],
+            where=roi_mask[:, :, None].astype(bool),
+        )
         return swapped_frame
     except Exception:
         return swapped_frame
 
+
 # --- START: Mac M1-M5 Optimizations ---
-IS_APPLE_SILICON = platform.system() == 'Darwin' and platform.machine() == 'arm64'
+IS_APPLE_SILICON = platform.system() == "Darwin" and platform.machine() == "arm64"
 FRAME_CACHE = deque(maxlen=3)  # Cache for frame reuse
 FACE_DETECTION_CACHE = {}  # Cache face detections
 LAST_DETECTION_TIME = 0
@@ -196,6 +240,7 @@ ADAPTIVE_QUALITY = True
 abs_dir = os.path.dirname(os.path.abspath(__file__))
 from _vendor.modules.paths import MODELS_DIR as models_dir  # noqa: E402
 
+
 def pre_check() -> bool:
     # Use models_dir instead of abs_dir to save to the correct location
     download_directory_path = models_dir
@@ -204,7 +249,9 @@ def pre_check() -> bool:
     try:
         os.makedirs(download_directory_path, exist_ok=True)
     except OSError as e:
-        logging.error(f"Failed to create directory {download_directory_path} due to permission error: {e}")
+        logging.error(
+            f"Failed to create directory {download_directory_path} due to permission error: {e}"
+        )
         return False
 
     from _vendor.modules.model_downloader import ensure_any, ensure_model
@@ -212,7 +259,10 @@ def pre_check() -> bool:
     selected = _selected_model()
     if selected != "inswapper_128":
         if ensure_model(f"{selected}.onnx") is None:
-            update_status(f"Could not obtain {selected}.onnx. Check your internet connection.", NAME)
+            update_status(
+                f"Could not obtain {selected}.onnx. Check your internet connection.",
+                NAME,
+            )
             return False
         return True
 
@@ -234,7 +284,10 @@ def pre_start() -> bool:
     fp16_path = os.path.join(models_dir, "inswapper_128_fp16.onnx")
     fp32_path = os.path.join(models_dir, "inswapper_128.onnx")
     if not os.path.exists(fp16_path) and not os.path.exists(fp32_path):
-        update_status(f"Model not found in {models_dir}. Please download inswapper_128.onnx.", NAME)
+        update_status(
+            f"Model not found in {models_dir}. Please download inswapper_128.onnx.",
+            NAME,
+        )
         return False
 
     # Try to get the face swapper to ensure it loads correctly
@@ -257,16 +310,18 @@ def _providers_config() -> list:
     for p in modules.globals.execution_providers:
         if p == "CoreMLExecutionProvider" and IS_APPLE_SILICON:
             # Enhanced CoreML configuration for M1-M5
-            providers_config.append((
-                "CoreMLExecutionProvider",
-                {
-                    "ModelFormat": "MLProgram",
-                    "MLComputeUnits": "ALL",  # Use Neural Engine + GPU + CPU
-                    "SpecializationStrategy": "FastPrediction",
-                    "AllowLowPrecisionAccumulationOnGPU": 1,
-                    "EnableOnSubgraphs": 1,
-                }
-            ))
+            providers_config.append(
+                (
+                    "CoreMLExecutionProvider",
+                    {
+                        "ModelFormat": "MLProgram",
+                        "MLComputeUnits": "ALL",  # Use Neural Engine + GPU + CPU
+                        "SpecializationStrategy": "FastPrediction",
+                        "AllowLowPrecisionAccumulationOnGPU": 1,
+                        "EnableOnSubgraphs": 1,
+                    },
+                )
+            )
         elif p == "CUDAExecutionProvider":
             # Use bare provider — ONNX Runtime defaults are
             # fastest on modern GPUs (Blackwell/sm_120).
@@ -300,14 +355,23 @@ class HyperSwapper:
     def input_size(self):
         """Aligned-face size: 256, or 512 with pixel boost (read per call, so
         the setting can change while live)."""
-        size = self.MODEL_SIZE * (2 if getattr(modules.globals, "swap_pixel_boost", False) else 1)
+        size = self.MODEL_SIZE * (
+            2 if getattr(modules.globals, "swap_pixel_boost", False) else 1
+        )
         return (size, size)
 
     def _run(self, embedding: np.ndarray, crop: np.ndarray):
-        blob = cv2.dnn.blobFromImage(crop, 1.0 / 127.5, (self.MODEL_SIZE, self.MODEL_SIZE),
-                                     (127.5, 127.5, 127.5), swapRB=True)
+        blob = cv2.dnn.blobFromImage(
+            crop,
+            1.0 / 127.5,
+            (self.MODEL_SIZE, self.MODEL_SIZE),
+            (127.5, 127.5, 127.5),
+            swapRB=True,
+        )
         out, mask = self.session.run(None, {"source": embedding, "target": blob})
-        rgb = np.clip((out[0].transpose(1, 2, 0) + 1.0) * 127.5, 0, 255).astype(np.uint8)
+        rgb = np.clip((out[0].transpose(1, 2, 0) + 1.0) * 127.5, 0, 255).astype(
+            np.uint8
+        )
         alpha = (np.clip(mask[0, 0], 0.0, 1.0) * 255).astype(np.uint8)
         return np.dstack([rgb[:, :, ::-1], alpha])
 
@@ -324,10 +388,13 @@ class HyperSwapper:
         for dy in range(factor):
             for dx in range(factor):
                 out[dy::factor, dx::factor] = self._run(
-                    embedding, np.ascontiguousarray(aimg[dy::factor, dx::factor]))
+                    embedding, np.ascontiguousarray(aimg[dy::factor, dx::factor])
+                )
         return out
 
-    def get(self, img: Frame, target_face: Face, source_face: Face, paste_back: bool = False):
+    def get(
+        self, img: Frame, target_face: Face, source_face: Face, paste_back: bool = False
+    ):
         kps = np.asarray(target_face.kps, dtype=np.float32)
         aimg, M = face_align.norm_crop2(img, kps, self.input_size[0])
         return self.swap_aligned(source_face, aimg), M
@@ -342,6 +409,7 @@ def _load_hyperswap(model: str) -> Any:
         return None
     if IS_APPLE_SILICON:
         from _vendor.modules.onnx_optimize import optimize_for_coreml
+
         model_path = optimize_for_coreml(model_path)
     update_status(f"Loading face swapper model from: {model_path}", NAME)
     try:
@@ -387,6 +455,7 @@ def get_face_swapper() -> Any:
             # the Neural Engine instead of bouncing between CPU and ANE.
             if IS_APPLE_SILICON:
                 from _vendor.modules.onnx_optimize import optimize_for_coreml
+
                 model_path = optimize_for_coreml(model_path)
 
             update_status(f"Loading face swapper model from: {model_path}", NAME)
@@ -398,8 +467,8 @@ def get_face_swapper() -> Any:
                 )
                 # Set up CUDA graph session for faster inference
                 if _HAS_TORCH_CUDA and any(
-                    p == "CUDAExecutionProvider" or
-                    (isinstance(p, tuple) and p[0] == "CUDAExecutionProvider")
+                    p == "CUDAExecutionProvider"
+                    or (isinstance(p, tuple) and p[0] == "CUDAExecutionProvider")
                     for p in providers_config
                 ):
                     _init_cuda_graph_session(model_path, FACE_SWAPPER)
@@ -415,6 +484,7 @@ def get_face_swapper() -> Any:
 _HAS_TORCH_CUDA = False
 try:
     import torch
+
     if torch.cuda.is_available():
         _HAS_TORCH_CUDA = True
 except ImportError:
@@ -422,8 +492,8 @@ except ImportError:
 
 # Cache for paste-back
 _paste_cache = {
-    'soft_alpha': None,  # feathered alpha mask in aligned-face space
-    'alpha_size': 0,
+    "soft_alpha": None,  # feathered alpha mask in aligned-face space
+    "alpha_size": 0,
 }
 
 
@@ -437,7 +507,7 @@ def _get_soft_alpha(size: int) -> np.ndarray:
     per-frame gives a visually equivalent feather at O(crop_area) cost —
     the feather radius scales naturally with the affine transform.
     """
-    if _paste_cache['alpha_size'] != size:
+    if _paste_cache["alpha_size"] != size:
         # Elliptical (not square) template — matches the gumroad edition's
         # _create_elliptical_mask. A full/eroded square leaves the aligned
         # crop's corners near-opaque, so the swapped square's straight edges
@@ -453,17 +523,18 @@ def _get_soft_alpha(size: int) -> np.ndarray:
         scale = max(1.0, size / 256.0)
         k = int(31 * scale) | 1
         mask = cv2.GaussianBlur(mask, (k, k), 12 * scale)
-        _paste_cache['soft_alpha'] = mask  # uint8 [0, 255] — blended via cv2 SIMD ops
-        _paste_cache['alpha_size'] = size
-    return _paste_cache['soft_alpha']
+        _paste_cache["soft_alpha"] = mask  # uint8 [0, 255] — blended via cv2 SIMD ops
+        _paste_cache["alpha_size"] = size
+    return _paste_cache["soft_alpha"]
+
 
 # CUDA graph swap session cache
 _cuda_graph_session = {
-    'session': None,
-    'io_binding': None,
-    'ort_input': None,
-    'ort_latent': None,
-    'recorded': False,
+    "session": None,
+    "io_binding": None,
+    "ort_input": None,
+    "ort_latent": None,
+    "recorded": False,
 }
 # Serializes CUDA-graph replay. The io_binding + ort_input/ort_latent are
 # shared across threads and run_with_iobinding mutates GPU-side buffers;
@@ -484,7 +555,7 @@ class _CudaGraphSessionAdapter:
         object.__setattr__(self, "_underlying", underlying)
 
     def run(self, output_names, input_dict, **kwargs):
-        if _cuda_graph_session['recorded']:
+        if _cuda_graph_session["recorded"]:
             try:
                 keys = list(input_dict.keys())
                 blob = input_dict[keys[0]]
@@ -509,8 +580,9 @@ def _init_cuda_graph_session(model_path: str, swapper):
     shapes (inswapper is always 1x3x128x128 + 1x512).
     """
     import onnxruntime as ort
+
     try:
-        providers = [('CUDAExecutionProvider', {'enable_cuda_graph': '1'})]
+        providers = [("CUDAExecutionProvider", {"enable_cuda_graph": "1"})]
         sess = ort.InferenceSession(model_path, providers=providers)
 
         # Pre-allocate GPU buffers with correct shapes
@@ -519,22 +591,22 @@ def _init_cuda_graph_session(model_path: str, swapper):
         dummy_inp = np.zeros(inp_shape, dtype=np.float32)
         dummy_lat = np.zeros(latent_shape, dtype=np.float32)
 
-        ort_input = ort.OrtValue.ortvalue_from_numpy(dummy_inp, 'cuda', 0)
-        ort_latent = ort.OrtValue.ortvalue_from_numpy(dummy_lat, 'cuda', 0)
+        ort_input = ort.OrtValue.ortvalue_from_numpy(dummy_inp, "cuda", 0)
+        ort_latent = ort.OrtValue.ortvalue_from_numpy(dummy_lat, "cuda", 0)
 
         io = sess.io_binding()
         io.bind_ortvalue_input(swapper.input_names[0], ort_input)
         io.bind_ortvalue_input(swapper.input_names[1], ort_latent)
-        io.bind_output(swapper.output_names[0], 'cuda', 0)
+        io.bind_output(swapper.output_names[0], "cuda", 0)
 
         # First run records the CUDA graph
         sess.run_with_iobinding(io)
 
-        _cuda_graph_session['session'] = sess
-        _cuda_graph_session['io_binding'] = io
-        _cuda_graph_session['ort_input'] = ort_input
-        _cuda_graph_session['ort_latent'] = ort_latent
-        _cuda_graph_session['recorded'] = True
+        _cuda_graph_session["session"] = sess
+        _cuda_graph_session["io_binding"] = io
+        _cuda_graph_session["ort_input"] = ort_input
+        _cuda_graph_session["ort_latent"] = ort_latent
+        _cuda_graph_session["recorded"] = True
 
         # Wrap swapper.session in an adapter instead of rebinding
         # session.run. insightface's INSwapper.get() reads .run via the
@@ -545,25 +617,31 @@ def _init_cuda_graph_session(model_path: str, swapper):
             swapper.session = _CudaGraphSessionAdapter(swapper.session)
 
         import sys
+
         print(f"[{NAME}] CUDA graph session initialized (swap model)")
         sys.stdout.flush()
     except Exception as e:
         print(f"[{NAME}] CUDA graph init failed, using standard session: {e}")
-        _cuda_graph_session['recorded'] = False
+        _cuda_graph_session["recorded"] = False
 
 
 def _cuda_graph_swap_inference(blob: np.ndarray, latent: np.ndarray) -> np.ndarray:
     """Run swap model via CUDA graph replay — minimal CPU overhead."""
     cg = _cuda_graph_session
     with _cuda_graph_lock:
-        cg['ort_input'].update_inplace(blob)
-        cg['ort_latent'].update_inplace(latent)
-        cg['session'].run_with_iobinding(cg['io_binding'])
-        return cg['io_binding'].get_outputs()[0].numpy()
+        cg["ort_input"].update_inplace(blob)
+        cg["ort_latent"].update_inplace(latent)
+        cg["session"].run_with_iobinding(cg["io_binding"])
+        return cg["io_binding"].get_outputs()[0].numpy()
 
 
-def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, M: np.ndarray,
-                     face_mask: Optional[np.ndarray] = None) -> Frame:
+def _fast_paste_back(
+    target_img: Frame,
+    bgr_fake: np.ndarray,
+    aimg: np.ndarray,
+    M: np.ndarray,
+    face_mask: Optional[np.ndarray] = None,
+) -> Frame:
     """Paste bgr_fake back onto target_img via the inverse affine of M.
 
     Restricts work to the face bbox in output coordinates and warps a
@@ -607,17 +685,23 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, 
         # glasses from the original, feathered, within the elliptical template.
         soft_mask = cv2.GaussianBlur(face_mask, (0, 0), max(1.0, face_h / 128.0))
         soft_alpha = cv2.multiply(soft_alpha, soft_mask, scale=1.0 / 255.0)
-    bgr_fake_crop = cv2.warpAffine(bgr_fake, IM_crop, (crop_w, crop_h), borderMode=cv2.BORDER_REPLICATE)
+    bgr_fake_crop = cv2.warpAffine(
+        bgr_fake, IM_crop, (crop_w, crop_h), borderMode=cv2.BORDER_REPLICATE
+    )
     alpha_crop = cv2.warpAffine(soft_alpha, IM_crop, (crop_w, crop_h), borderValue=0)
 
     target_crop = target_img[y1p:y2p, x1p:x2p]
 
     if _HAS_TORCH_CUDA:
         # Scale alpha to [0, 1] on device — cheaper to upload uint8 than float.
-        mask_t = torch.from_numpy(alpha_crop).cuda().float().mul_(1.0 / 255.0).unsqueeze(2)
+        mask_t = (
+            torch.from_numpy(alpha_crop).cuda().float().mul_(1.0 / 255.0).unsqueeze(2)
+        )
         fake_t = torch.from_numpy(bgr_fake_crop).float().cuda()
         tgt_t = torch.from_numpy(target_crop).float().cuda()
-        blended = (mask_t * fake_t + (1.0 - mask_t) * tgt_t).to(torch.uint8).cpu().numpy()
+        blended = (
+            (mask_t * fake_t + (1.0 - mask_t) * tgt_t).to(torch.uint8).cpu().numpy()
+        )
         target_img[y1p:y2p, x1p:x2p] = blended
     else:
         # Fused uint8 blend via cv2 SIMD — no float32 round-trip.
@@ -635,13 +719,18 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
     """Optimized face swapping with better memory management and performance."""
     face_swapper = get_face_swapper()
     if face_swapper is None:
-        update_status("Face swapper model not loaded or failed to load. Skipping swap.", NAME)
+        update_status(
+            "Face swapper model not loaded or failed to load. Skipping swap.", NAME
+        )
         return temp_frame
 
     # Safety check for faces
     if source_face is None or target_face is None:
         return temp_frame
-    if not hasattr(source_face, 'normed_embedding') or source_face.normed_embedding is None:
+    if (
+        not hasattr(source_face, "normed_embedding")
+        or source_face.normed_embedding is None
+    ):
         return temp_frame
 
     frame = temp_frame
@@ -649,11 +738,13 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         frame = np.clip(frame, 0, 255).astype(np.uint8)
 
     try:
-        if not frame.flags['C_CONTIGUOUS']:
+        if not frame.flags["C_CONTIGUOUS"]:
             frame = np.ascontiguousarray(frame)
 
         # Use paste_back=False and our optimized paste-back
-        if any("DmlExecutionProvider" in p for p in modules.globals.execution_providers):
+        if any(
+            "DmlExecutionProvider" in p for p in modules.globals.execution_providers
+        ):
             with modules.globals.dml_lock:
                 bgr_fake, M = face_swapper.get(
                     frame, target_face, source_face, paste_back=False
@@ -671,7 +762,9 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
     return paste_swapped_face(temp_frame, bgr_fake, M, target_face)
 
 
-def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, target_face: Face) -> Frame:
+def paste_swapped_face(
+    temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, target_face: Face
+) -> Frame:
     """Paste the swap model's aligned output back onto ``temp_frame``.
 
     ``M`` is the alignment of ``target_face`` in ``temp_frame``. The mouth
@@ -703,7 +796,7 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
         temp_frame = np.clip(temp_frame, 0, 255).astype(np.uint8)
 
     try:
-        if not temp_frame.flags['C_CONTIGUOUS']:
+        if not temp_frame.flags["C_CONTIGUOUS"]:
             temp_frame = np.ascontiguousarray(temp_frame)
 
         # Pass a dummy aimg with correct shape — _fast_paste_back only uses aimg.shape
@@ -711,7 +804,9 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
         _face_size = bgr_fake.shape[0]
         _aimg_dummy = np.empty((_face_size, _face_size, 3), dtype=np.uint8)
 
-        swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M, model_mask)
+        swapped_frame = _fast_paste_back(
+            temp_frame, bgr_fake, _aimg_dummy, M, model_mask
+        )
 
     except Exception as e:
         print(f"Error during face swap: {e}")
@@ -720,17 +815,21 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
     # --- Post-swap Processing (Masking, Opacity, etc.) ---
     # Now, work with the guaranteed uint8 'swapped_frame'
 
-    if mouth_mask_enabled: # Check if mouth_mask is enabled
+    if mouth_mask_enabled:  # Check if mouth_mask is enabled
         # Create a mask for the target face
-        face_mask = create_face_mask(target_face, original_frame) # Use original_frame for mask creation geometry
+        face_mask = create_face_mask(
+            target_face, original_frame
+        )  # Use original_frame for mask creation geometry
 
         # Create the mouth mask using the ORIGINAL frame (before swap) for cutout
         mouth_mask, mouth_cutout, mouth_box, lower_lip_polygon = (
-            create_lower_mouth_mask(target_face, original_frame) # Use original_frame for real mouth cutout
+            create_lower_mouth_mask(
+                target_face, original_frame
+            )  # Use original_frame for real mouth cutout
         )
 
         # Apply the mouth area only if mouth_cutout exists
-        if mouth_cutout is not None and mouth_box != (0,0,0,0):
+        if mouth_cutout is not None and mouth_box != (0, 0, 0, 0):
             # Apply mouth area (from original) onto the 'swapped_frame'
             swapped_frame = apply_mouth_area(
                 swapped_frame, mouth_cutout, mouth_box, face_mask, lower_lip_polygon
@@ -738,11 +837,16 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
 
             # Draw bounding box only while slider is being dragged
             if getattr(modules.globals, "show_mouth_mask_box", False):
-                mouth_mask_data = (mouth_mask, mouth_cutout, mouth_box, lower_lip_polygon)
+                mouth_mask_data = (
+                    mouth_mask,
+                    mouth_cutout,
+                    mouth_box,
+                    lower_lip_polygon,
+                )
                 swapped_frame = draw_mouth_mask_visualization(
                     swapped_frame, target_face, mouth_mask_data
                 )
-        
+
     # --- Poisson Blending ---
     # Mask derived from the swap's own affine (M) + swapped pixels (bgr_fake),
     # so it tracks the swapped face exactly per-frame — no landmark jitter,
@@ -757,7 +861,13 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
         return swapped_frame.astype(np.uint8)
 
     # Blend the original_frame with the (potentially mouth-masked) swapped_frame
-    final_swapped_frame = gpu_add_weighted(original_frame.astype(np.uint8), 1 - opacity, swapped_frame.astype(np.uint8), opacity, 0)
+    final_swapped_frame = gpu_add_weighted(
+        original_frame.astype(np.uint8),
+        1 - opacity,
+        swapped_frame.astype(np.uint8),
+        opacity,
+        0,
+    )
     return final_swapped_frame.astype(np.uint8)
 
 
@@ -862,7 +972,8 @@ class AsyncLiveSwapper:
             return previous is not None
         scale = distance / previous[1]
         return (
-            float(np.linalg.norm(center - previous[0])) > self.MAX_TARGET_JUMP * previous[1]
+            float(np.linalg.norm(center - previous[0]))
+            > self.MAX_TARGET_JUMP * previous[1]
             or not 1 / self.MAX_TARGET_SCALE <= scale <= self.MAX_TARGET_SCALE
         )
 
@@ -904,7 +1015,9 @@ def _put_latest(jobs: queue.Queue, job: Any) -> None:
                 pass
 
 
-def _swap_aligned_face(face_swapper: Any, source_face: Face, aimg: np.ndarray) -> np.ndarray:
+def _swap_aligned_face(
+    face_swapper: Any, source_face: Face, aimg: np.ndarray
+) -> np.ndarray:
     """Run the swap model on an already aligned crop, as INSwapper.get() does.
 
     Mirrors insightface 0.7.3's aligned-face path (blob, emap projection,
@@ -944,7 +1057,7 @@ def _swap_aligned_face(face_swapper: Any, source_face: Face, aimg: np.ndarray) -
 def get_faces_optimized(frame: Frame, use_cache: bool = True) -> Optional[List[Face]]:
     """Optimized face detection for live mode on Apple Silicon"""
     global LAST_DETECTION_TIME, FACE_DETECTION_CACHE
-    
+
     if not use_cache or not IS_APPLE_SILICON:
         # Standard detection
         if modules.globals.many_faces:
@@ -952,15 +1065,15 @@ def get_faces_optimized(frame: Frame, use_cache: bool = True) -> Optional[List[F
         else:
             face = get_one_face(frame)
             return [face] if face else None
-    
+
     # Adaptive detection rate for live mode
     current_time = time.time()
     time_since_last = current_time - LAST_DETECTION_TIME
-    
+
     # Skip detection if too soon (adaptive frame skipping)
     if time_since_last < DETECTION_INTERVAL and FACE_DETECTION_CACHE:
-        return FACE_DETECTION_CACHE.get('faces')
-    
+        return FACE_DETECTION_CACHE.get("faces")
+
     # Perform detection
     LAST_DETECTION_TIME = current_time
     if modules.globals.many_faces:
@@ -968,16 +1081,21 @@ def get_faces_optimized(frame: Frame, use_cache: bool = True) -> Optional[List[F
     else:
         face = get_one_face(frame)
         faces = [face] if face else None
-    
+
     # Cache results
-    FACE_DETECTION_CACHE['faces'] = faces
-    FACE_DETECTION_CACHE['timestamp'] = current_time
-    
+    FACE_DETECTION_CACHE["faces"] = faces
+    FACE_DETECTION_CACHE["timestamp"] = current_time
+
     return faces
+
+
 # --- END: Mac M1-M5 Optimized Face Detection ---
 
+
 # --- START: Helper function for interpolation and sharpening ---
-def apply_post_processing(current_frame: Frame, swapped_face_bboxes: List[np.ndarray]) -> Frame:
+def apply_post_processing(
+    current_frame: Frame, swapped_face_bboxes: List[np.ndarray]
+) -> Frame:
     """Applies sharpening and interpolation with Apple Silicon optimizations."""
     global PREVIOUS_FRAME_RESULT
 
@@ -997,18 +1115,17 @@ def apply_post_processing(current_frame: Frame, swapped_face_bboxes: List[np.nda
         height, width = processed_frame.shape[:2]
         for bbox in swapped_face_bboxes:
             # Ensure bbox is iterable and has 4 elements
-            if not hasattr(bbox, '__iter__') or len(bbox) != 4:
+            if not hasattr(bbox, "__iter__") or len(bbox) != 4:
                 # print(f"Warning: Invalid bbox format for sharpening: {bbox}") # Debug
                 continue
             x1, y1, x2, y2 = bbox
             # Ensure coordinates are integers and within bounds
             try:
-                 x1, y1 = max(0, int(x1)), max(0, int(y1))
-                 x2, y2 = min(width, int(x2)), min(height, int(y2))
+                x1, y1 = max(0, int(x1)), max(0, int(y1))
+                x2, y2 = min(width, int(x2)), min(height, int(y2))
             except ValueError:
                 # print(f"Warning: Could not convert bbox coordinates to int: {bbox}") # Debug
                 continue
-
 
             if x2 <= x1 or y2 <= y1:
                 continue
@@ -1024,47 +1141,62 @@ def apply_post_processing(current_frame: Frame, swapped_face_bboxes: List[np.nda
             except cv2.error:
                 pass
 
-
     # 2. Apply Interpolation (if enabled)
     enable_interpolation = getattr(modules.globals, "enable_interpolation", False)
     interpolation_weight = getattr(modules.globals, "interpolation_weight", 0.2)
 
-    final_frame = processed_frame # Start with the current (potentially sharpened) frame
+    final_frame = (
+        processed_frame  # Start with the current (potentially sharpened) frame
+    )
 
     if enable_interpolation and 0 < interpolation_weight < 1:
-        if PREVIOUS_FRAME_RESULT is not None and PREVIOUS_FRAME_RESULT.shape == processed_frame.shape and PREVIOUS_FRAME_RESULT.dtype == processed_frame.dtype:
+        if (
+            PREVIOUS_FRAME_RESULT is not None
+            and PREVIOUS_FRAME_RESULT.shape == processed_frame.shape
+            and PREVIOUS_FRAME_RESULT.dtype == processed_frame.dtype
+        ):
             # Perform interpolation
             try:
-                 final_frame = gpu_add_weighted(
-                    PREVIOUS_FRAME_RESULT, 1.0 - interpolation_weight,
-                    processed_frame, interpolation_weight,
-                    0
-                 )
-                 # Ensure final frame is uint8
-                 final_frame = np.clip(final_frame, 0, 255).astype(np.uint8)
+                final_frame = gpu_add_weighted(
+                    PREVIOUS_FRAME_RESULT,
+                    1.0 - interpolation_weight,
+                    processed_frame,
+                    interpolation_weight,
+                    0,
+                )
+                # Ensure final frame is uint8
+                final_frame = np.clip(final_frame, 0, 255).astype(np.uint8)
             except cv2.error as interp_e:
-                 # print(f"Warning: OpenCV error during interpolation: {interp_e}") # Debug
-                 final_frame = processed_frame # Use current frame if interpolation fails
-                 PREVIOUS_FRAME_RESULT = None # Reset state if error occurs
+                # print(f"Warning: OpenCV error during interpolation: {interp_e}") # Debug
+                final_frame = (
+                    processed_frame  # Use current frame if interpolation fails
+                )
+                PREVIOUS_FRAME_RESULT = None  # Reset state if error occurs
 
             # Update the state for the next frame *with the interpolated result*
             PREVIOUS_FRAME_RESULT = final_frame.copy()
         else:
             # If previous frame invalid or doesn't match, use current frame and update state
-            if PREVIOUS_FRAME_RESULT is not None and PREVIOUS_FRAME_RESULT.shape != processed_frame.shape:
+            if (
+                PREVIOUS_FRAME_RESULT is not None
+                and PREVIOUS_FRAME_RESULT.shape != processed_frame.shape
+            ):
                 # print("Info: Frame shape changed, resetting interpolation state.") # Debug
                 pass
             PREVIOUS_FRAME_RESULT = processed_frame.copy()
     else:
-         # Interpolation is off or weight is invalid — no need to cache
-         PREVIOUS_FRAME_RESULT = None
-
+        # Interpolation is off or weight is invalid — no need to cache
+        PREVIOUS_FRAME_RESULT = None
 
     return final_frame
+
+
 # --- END: Helper function for interpolation and sharpening ---
 
 
-def process_frame(source_face: Face, temp_frame: Frame, target_face: Face = None) -> Frame:
+def process_frame(
+    source_face: Face, temp_frame: Frame, target_face: Face = None
+) -> Frame:
     """Process a single frame, swapping source_face onto detected target(s).
 
     Args:
@@ -1110,8 +1242,8 @@ def process_frame_v2(temp_frame: Frame, temp_frame_path: str = "") -> Frame:
         PREVIOUS_FRAME_RESULT = None
         return temp_frame
 
-    processed_frame = temp_frame # Start with the input frame
-    swapped_face_bboxes = [] # Keep track of where swaps happened
+    processed_frame = temp_frame  # Start with the input frame
+    swapped_face_bboxes = []  # Keep track of where swaps happened
 
     # Determine source/target pairs based on mode
     source_target_pairs = []
@@ -1121,108 +1253,163 @@ def process_frame_v2(temp_frame: Frame, temp_frame_path: str = "") -> Frame:
     simple_map = getattr(modules.globals, "simple_map", None)
 
     # Check if target is a file path (image or video) or live stream
-    is_file_target = modules.globals.target_path and (is_image(modules.globals.target_path) or is_video(modules.globals.target_path))
+    is_file_target = modules.globals.target_path and (
+        is_image(modules.globals.target_path) or is_video(modules.globals.target_path)
+    )
 
     if is_file_target:
         # Processing specific image or video file with pre-analyzed maps
         if source_target_map:
             if modules.globals.many_faces:
-                source_face = default_source_face() # Use default source for all targets
+                source_face = (
+                    default_source_face()
+                )  # Use default source for all targets
                 if source_face:
                     for map_data in source_target_map:
                         if is_image(modules.globals.target_path):
                             target_info = map_data.get("target", {})
-                            if target_info: # Check if target info exists
+                            if target_info:  # Check if target info exists
                                 target_face = target_info.get("face")
                                 if target_face:
-                                    source_target_pairs.append((source_face, target_face))
+                                    source_target_pairs.append(
+                                        (source_face, target_face)
+                                    )
                         elif is_video(modules.globals.target_path):
-                             # Find faces for the current frame_path in video map
-                             target_frames_data = map_data.get("target_faces_in_frame", [])
-                             if target_frames_data: # Check if frame data exists
-                                 target_frames = [f for f in target_frames_data if f and f.get("location") == temp_frame_path]
-                                 for frame_data in target_frames:
-                                     faces_in_frame = frame_data.get("faces", [])
-                                     if faces_in_frame: # Check if faces exist
-                                         for target_face in faces_in_frame:
-                                             source_target_pairs.append((source_face, target_face))
-            else: # Single face or specific mapping
-                 for map_data in source_target_map:
+                            # Find faces for the current frame_path in video map
+                            target_frames_data = map_data.get(
+                                "target_faces_in_frame", []
+                            )
+                            if target_frames_data:  # Check if frame data exists
+                                target_frames = [
+                                    f
+                                    for f in target_frames_data
+                                    if f and f.get("location") == temp_frame_path
+                                ]
+                                for frame_data in target_frames:
+                                    faces_in_frame = frame_data.get("faces", [])
+                                    if faces_in_frame:  # Check if faces exist
+                                        for target_face in faces_in_frame:
+                                            source_target_pairs.append(
+                                                (source_face, target_face)
+                                            )
+            else:  # Single face or specific mapping
+                for map_data in source_target_map:
                     source_info = map_data.get("source", {})
                     if not source_info:
-                        continue # Skip if no source info
+                        continue  # Skip if no source info
                     source_face = source_info.get("face")
                     if not source_face:
-                        continue # Skip if no source defined for this map entry
+                        continue  # Skip if no source defined for this map entry
 
                     if is_image(modules.globals.target_path):
                         target_info = map_data.get("target", {})
                         if target_info:
-                           target_face = target_info.get("face")
-                           if target_face:
-                              source_target_pairs.append((source_face, target_face))
+                            target_face = target_info.get("face")
+                            if target_face:
+                                source_target_pairs.append((source_face, target_face))
                     elif is_video(modules.globals.target_path):
                         target_frames_data = map_data.get("target_faces_in_frame", [])
                         if target_frames_data:
-                           target_frames = [f for f in target_frames_data if f and f.get("location") == temp_frame_path]
-                           for frame_data in target_frames:
-                               faces_in_frame = frame_data.get("faces", [])
-                               if faces_in_frame:
-                                  for target_face in faces_in_frame:
-                                      source_target_pairs.append((source_face, target_face))
+                            target_frames = [
+                                f
+                                for f in target_frames_data
+                                if f and f.get("location") == temp_frame_path
+                            ]
+                            for frame_data in target_frames:
+                                faces_in_frame = frame_data.get("faces", [])
+                                if faces_in_frame:
+                                    for target_face in faces_in_frame:
+                                        source_target_pairs.append(
+                                            (source_face, target_face)
+                                        )
 
     else:
         # Live stream or webcam processing (analyze faces on the fly)
         detected_faces = get_many_faces(processed_frame)
         if detected_faces:
             if modules.globals.many_faces:
-                 source_face = default_source_face() # Use default source for all detected targets
-                 if source_face:
-                     for target_face in detected_faces:
+                source_face = (
+                    default_source_face()
+                )  # Use default source for all detected targets
+                if source_face:
+                    for target_face in detected_faces:
                         source_target_pairs.append((source_face, target_face))
             elif simple_map:
                 # Use simple_map (source_faces <-> target_embeddings)
                 source_faces = simple_map.get("source_faces", [])
                 target_embeddings = simple_map.get("target_embeddings", [])
 
-                if source_faces and target_embeddings and len(source_faces) == len(target_embeddings):
-                     # Match detected faces to the closest target embedding
-                     if len(detected_faces) <= len(target_embeddings):
-                          # More targets defined than detected - match each detected face
-                          for detected_face in detected_faces:
-                              if detected_face.normed_embedding is None:
-                                  continue
-                              closest_idx, _ = find_closest_centroid(target_embeddings, detected_face.normed_embedding)
-                              if 0 <= closest_idx < len(source_faces):
-                                  source_target_pairs.append((source_faces[closest_idx], detected_face))
-                     else:
-                          # More faces detected than targets defined - match each target embedding to closest detected face
-                          detected_embeddings = [f.normed_embedding for f in detected_faces if f.normed_embedding is not None]
-                          detected_faces_with_embedding = [f for f in detected_faces if f.normed_embedding is not None]
-                          if not detected_embeddings:
-                              return processed_frame # No embeddings to match
+                if (
+                    source_faces
+                    and target_embeddings
+                    and len(source_faces) == len(target_embeddings)
+                ):
+                    # Match detected faces to the closest target embedding
+                    if len(detected_faces) <= len(target_embeddings):
+                        # More targets defined than detected - match each detected face
+                        for detected_face in detected_faces:
+                            if detected_face.normed_embedding is None:
+                                continue
+                            closest_idx, _ = find_closest_centroid(
+                                target_embeddings, detected_face.normed_embedding
+                            )
+                            if 0 <= closest_idx < len(source_faces):
+                                source_target_pairs.append(
+                                    (source_faces[closest_idx], detected_face)
+                                )
+                    else:
+                        # More faces detected than targets defined - match each target embedding to closest detected face
+                        detected_embeddings = [
+                            f.normed_embedding
+                            for f in detected_faces
+                            if f.normed_embedding is not None
+                        ]
+                        detected_faces_with_embedding = [
+                            f for f in detected_faces if f.normed_embedding is not None
+                        ]
+                        if not detected_embeddings:
+                            return processed_frame  # No embeddings to match
 
-                          for i, target_embedding in enumerate(target_embeddings):
-                              if 0 <= i < len(source_faces): # Ensure source face exists for this embedding
-                                 closest_idx, _ = find_closest_centroid(detected_embeddings, target_embedding)
-                                 if 0 <= closest_idx < len(detected_faces_with_embedding):
-                                     source_target_pairs.append((source_faces[i], detected_faces_with_embedding[closest_idx]))
-            else: # Fallback: if no map, use default source for the single detected face (if any)
+                        for i, target_embedding in enumerate(target_embeddings):
+                            if (
+                                0 <= i < len(source_faces)
+                            ):  # Ensure source face exists for this embedding
+                                closest_idx, _ = find_closest_centroid(
+                                    detected_embeddings, target_embedding
+                                )
+                                if (
+                                    0
+                                    <= closest_idx
+                                    < len(detected_faces_with_embedding)
+                                ):
+                                    source_target_pairs.append(
+                                        (
+                                            source_faces[i],
+                                            detected_faces_with_embedding[closest_idx],
+                                        )
+                                    )
+            else:  # Fallback: if no map, use default source for the single detected face (if any)
                 source_face = default_source_face()
-                target_face = get_one_face(processed_frame, detected_faces) # Use faces already detected
+                target_face = get_one_face(
+                    processed_frame, detected_faces
+                )  # Use faces already detected
                 if source_face and target_face:
                     source_target_pairs.append((source_face, target_face))
 
-
     # Perform swaps based on the collected pairs
-    current_swap_target = processed_frame.copy() # Apply swaps sequentially
+    current_swap_target = processed_frame.copy()  # Apply swaps sequentially
     for source_face, target_face in source_target_pairs:
         if source_face and target_face:
-            current_swap_target = swap_face(source_face, target_face, current_swap_target)
-            if target_face is not None and hasattr(target_face, "bbox") and target_face.bbox is not None:
+            current_swap_target = swap_face(
+                source_face, target_face, current_swap_target
+            )
+            if (
+                target_face is not None
+                and hasattr(target_face, "bbox")
+                and target_face.bbox is not None
+            ):
                 swapped_face_bboxes.append(target_face.bbox.astype(int))
-    processed_frame = current_swap_target # Assign final result
-
+    processed_frame = current_swap_target  # Assign final result
 
     # Apply sharpening and interpolation
     final_frame = apply_post_processing(processed_frame, swapped_face_bboxes)
@@ -1241,32 +1428,47 @@ def process_frames(
     """
     # Determine which processing function to use based on map_faces global setting
     use_v2 = getattr(modules.globals, "map_faces", False)
-    source_face = None # Initialize source_face
+    source_face = None  # Initialize source_face
 
     # --- Pre-load source face only if needed (Simple Mode: map_faces=False) ---
     if not use_v2:
         if not source_path or not os.path.exists(source_path):
-            update_status(f"Error: Source path invalid or not provided for simple mode: {source_path}", NAME)
+            update_status(
+                f"Error: Source path invalid or not provided for simple mode: {source_path}",
+                NAME,
+            )
             # Log the error but allow proceeding; subsequent check will stop processing.
         else:
             try:
                 source_img = imread_unicode(source_path)
                 if source_img is None:
                     # Specific error for file reading failure
-                    update_status(f"Error reading source image file {source_path}. Please check the path and file integrity.", NAME)
+                    update_status(
+                        f"Error reading source image file {source_path}. Please check the path and file integrity.",
+                        NAME,
+                    )
                 else:
                     source_face = get_one_face(source_img)
                     if source_face is None:
                         # Specific message for no face detected after successful read
-                        update_status(f"Warning: Successfully read source image {source_path}, but no face was detected. Swaps will be skipped.", NAME)
+                        update_status(
+                            f"Warning: Successfully read source image {source_path}, but no face was detected. Swaps will be skipped.",
+                            NAME,
+                        )
                     # Free memory immediately after extracting face
                     del source_img
             except Exception as e:
                 # Print the specific exception caught
                 import traceback
-                print(f"{NAME}: Caught exception during source image processing for {source_path}:")
-                traceback.print_exc() # Print the full traceback
-                update_status(f"Error during source image reading or analysis {source_path}: {e}", NAME)
+
+                print(
+                    f"{NAME}: Caught exception during source image processing for {source_path}:"
+                )
+                traceback.print_exc()  # Print the full traceback
+                update_status(
+                    f"Error during source image reading or analysis {source_path}: {e}",
+                    NAME,
+                )
                 # Log general exception during the process
 
     total_frames = len(temp_frame_paths)
@@ -1274,13 +1476,18 @@ def process_frames(
 
     # --- Stop processing entirely if in Simple Mode and source face is invalid ---
     if not use_v2 and source_face is None:
-        update_status("Halting video processing: Invalid or no face detected in source image for simple mode.", NAME)
+        update_status(
+            "Halting video processing: Invalid or no face detected in source image for simple mode.",
+            NAME,
+        )
         if progress:
             # Ensure the progress bar completes if it was started
-            remaining_updates = total_frames - progress.n if hasattr(progress, 'n') else total_frames
+            remaining_updates = (
+                total_frames - progress.n if hasattr(progress, "n") else total_frames
+            )
             if remaining_updates > 0:
                 progress.update(remaining_updates)
-        return # Exit the function entirely
+        return  # Exit the function entirely
 
     # --- Process each frame path provided in the list ---
     # Note: In the current core.py multi_process_frame, temp_frame_paths will usually contain only ONE path per call.
@@ -1292,10 +1499,12 @@ def process_frames(
         try:
             temp_frame = imread_unicode(temp_frame_path)
             if temp_frame is None:
-                print(f"{NAME}: Error: Could not read frame: {temp_frame_path}, skipping.")
+                print(
+                    f"{NAME}: Error: Could not read frame: {temp_frame_path}, skipping."
+                )
                 if progress:
                     progress.update(1)
-                continue # Skip this frame if read fails
+                continue  # Skip this frame if read fails
         except Exception as read_e:
             print(f"{NAME}: Error reading frame {temp_frame_path}: {read_e}, skipping.")
             if progress:
@@ -1312,28 +1521,36 @@ def process_frames(
             else:
                 # Simple mode uses the pre-loaded source_face (already checked for validity above)
                 # update_status(f"Using process_frame (simple) for: {os.path.basename(temp_frame_path)}", NAME) # Optional Debug
-                result_frame = process_frame(source_face, temp_frame) # source_face is guaranteed to be valid here
+                result_frame = process_frame(
+                    source_face, temp_frame
+                )  # source_face is guaranteed to be valid here
 
             # Check if processing actually returned a frame
             if result_frame is None:
-                 print(f"{NAME}: Warning: Processing returned None for frame {temp_frame_path}. Using original.")
-                 result_frame = temp_frame
+                print(
+                    f"{NAME}: Warning: Processing returned None for frame {temp_frame_path}. Using original."
+                )
+                result_frame = temp_frame
 
         except Exception as proc_e:
             print(f"{NAME}: Error processing frame {temp_frame_path}: {proc_e}")
             # import traceback # Optional for detailed debugging
             # traceback.print_exc()
-            result_frame = temp_frame # Use original frame on processing error
+            result_frame = temp_frame  # Use original frame on processing error
 
         # Write the result back to the same frame path with optimized compression
         try:
             # Use PNG compression level 3 (faster) instead of default 9
-            write_success = imwrite_unicode(temp_frame_path, result_frame, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+            write_success = imwrite_unicode(
+                temp_frame_path, result_frame, [cv2.IMWRITE_PNG_COMPRESSION, 3]
+            )
             if not write_success:
-                print(f"{NAME}: Error: Failed to write processed frame to {temp_frame_path}")
+                print(
+                    f"{NAME}: Error: Failed to write processed frame to {temp_frame_path}"
+                )
         except Exception as write_e:
             print(f"{NAME}: Error writing frame {temp_frame_path}: {write_e}")
-        
+
         # Free memory immediately after processing
         del temp_frame
         if result_frame is not None:
@@ -1370,24 +1587,34 @@ def process_image(source_path: str, target_path: str, output_path: str) -> None:
     try:
         if use_v2:
             if getattr(modules.globals, "many_faces", False):
-                 update_status("Processing image with 'map_faces' and 'many_faces'. Using pre-analysis map.", NAME)
+                update_status(
+                    "Processing image with 'map_faces' and 'many_faces'. Using pre-analysis map.",
+                    NAME,
+                )
             # V2 processes based on global maps, doesn't need source_path here directly
             # Assumes maps are pre-populated. Pass target_path for map lookup.
             result = process_frame_v2(target_frame, target_path)
 
-        else: # Simple mode
+        else:  # Simple mode
             try:
                 source_img = imread_unicode(source_path)
                 if source_img is None:
-                    update_status(f"Error: Could not read source image: {source_path}", NAME)
+                    update_status(
+                        f"Error: Could not read source image: {source_path}", NAME
+                    )
                     return
                 source_face = get_one_face(source_img)
                 if not source_face:
-                    update_status(f"Error: No face found in source image: {source_path}", NAME)
+                    update_status(
+                        f"Error: No face found in source image: {source_path}", NAME
+                    )
                     return
             except Exception as src_e:
-                 update_status(f"Error reading or analyzing source image {source_path}: {src_e}", NAME)
-                 return
+                update_status(
+                    f"Error reading or analyzing source image {source_path}: {src_e}",
+                    NAME,
+                )
+                return
 
             result = process_frame(source_face, target_frame)
 
@@ -1397,15 +1624,17 @@ def process_image(source_path: str, target_path: str, output_path: str) -> None:
             if write_success:
                 update_status(f"Output image saved to: {output_path}", NAME)
             else:
-                update_status(f"Error: Failed to write output image to {output_path}", NAME)
+                update_status(
+                    f"Error: Failed to write output image to {output_path}", NAME
+                )
         else:
             # This case might occur if process_frame/v2 returns None unexpectedly
             update_status("Image processing failed (result was None).", NAME)
 
     except Exception as proc_e:
-         update_status(f"Error during image processing: {proc_e}", NAME)
-         # import traceback
-         # traceback.print_exc()
+        update_status(f"Error during image processing: {proc_e}", NAME)
+        # import traceback
+        # traceback.print_exc()
 
 
 def process_video(source_path: str, temp_frame_paths: List[str]) -> None:
@@ -1415,42 +1644,54 @@ def process_video(source_path: str, temp_frame_paths: List[str]) -> None:
     PREVIOUS_FRAME_RESULT = None
     # ---
 
-    mode_desc = "'map_faces'" if getattr(modules.globals, "map_faces", False) else "'simple'"
-    if getattr(modules.globals, "map_faces", False) and getattr(modules.globals, "many_faces", False):
+    mode_desc = (
+        "'map_faces'" if getattr(modules.globals, "map_faces", False) else "'simple'"
+    )
+    if getattr(modules.globals, "map_faces", False) and getattr(
+        modules.globals, "many_faces", False
+    ):
         mode_desc += " and 'many_faces'. Using pre-analysis map."
     update_status(f"Processing video with {mode_desc} mode.", NAME)
 
     # Pass the correct source_path (needed for simple mode in process_frames)
     # The core processing logic handles calling the right frame function (process_frames)
     modules.processors.frame.core.process_video(
-        source_path, temp_frame_paths, process_frames # Pass the newly modified process_frames
+        source_path,
+        temp_frame_paths,
+        process_frames,  # Pass the newly modified process_frames
     )
+
 
 # ==========================
 # MASKING FUNCTIONS (Mostly unchanged, added safety checks and minor improvements)
 # ==========================
+
 
 def create_lower_mouth_mask(
     face: Face, frame: Frame
 ) -> (np.ndarray, np.ndarray, tuple, np.ndarray):
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     mouth_cutout = None
-    lower_lip_polygon = None # Initialize
-    mouth_box = (0,0,0,0) # Initialize
+    lower_lip_polygon = None  # Initialize
+    mouth_box = (0, 0, 0, 0)  # Initialize
 
     # Validate face and landmarks
-    if face is None or not hasattr(face, 'landmark_2d_106'):
+    if face is None or not hasattr(face, "landmark_2d_106"):
         # print("Warning: Invalid face object passed to create_lower_mouth_mask.")
         return mask, mouth_cutout, mouth_box, lower_lip_polygon
 
     landmarks = face.landmark_2d_106
 
     # Check landmark validity
-    if landmarks is None or not isinstance(landmarks, np.ndarray) or landmarks.shape[0] < 106:
+    if (
+        landmarks is None
+        or not isinstance(landmarks, np.ndarray)
+        or landmarks.shape[0] < 106
+    ):
         # print("Warning: Invalid or insufficient landmarks for mouth mask.")
         return mask, mouth_cutout, mouth_box, lower_lip_polygon
 
-    try: # Wrap main logic in try-except
+    try:  # Wrap main logic in try-except
         # Outer mouth/lip landmarks (52-63) — the lip outline only. In this
         # repo's insightface 2d106 convention these 12 points, taken in index
         # order, form a SIMPLE (non-self-intersecting) closed polygon that
@@ -1475,7 +1716,7 @@ def create_lower_mouth_mask(
             return mask, mouth_cutout, mouth_box, lower_lip_polygon
 
         center = np.mean(lower_lip_landmarks, axis=0)
-        if not np.all(np.isfinite(center)): # Check center calculation
+        if not np.all(np.isfinite(center)):  # Check center calculation
             # print("Warning: Could not calculate valid center for mouth mask.")
             return mask, mouth_cutout, mouth_box, lower_lip_polygon
 
@@ -1483,18 +1724,21 @@ def create_lower_mouth_mask(
         # The known-good version expanded by the now-unused mask_down_size
         # constant, which is why the slider had no effect.
         # s: 0.0 (slider ~0, tight lip outline) -> 1.0 (slider 100, mouth->chin).
-        mouth_mask_size = getattr(modules.globals, "mouth_mask_size", 0.0) # 0-100 slider
+        mouth_mask_size = getattr(
+            modules.globals, "mouth_mask_size", 0.0
+        )  # 0-100 slider
         s = max(0.0, min(1.0, mouth_mask_size / 100.0))
 
         # Uniformly scaling a simple polygon about its centroid keeps it simple
         # (no self-intersection). x grows with expansion_factor; points below
         # centre (toward the chin) also get an extra downward stretch so high
         # slider values reach from the mouth down to the chin.
-        expansion_factor = 1.0 + s * 2.0          # 1.0x -> 3.0x
-        chin_bias = 1.0 + s * 2.0                  # extra downward stretch
+        expansion_factor = 1.0 + s * 2.0  # 1.0x -> 3.0x
+        chin_bias = 1.0 + s * 2.0  # extra downward stretch
         offsets = lower_lip_landmarks - center
-        scale_y = np.where(offsets[:, 1] > 0,
-                           expansion_factor * chin_bias, expansion_factor)
+        scale_y = np.where(
+            offsets[:, 1] > 0, expansion_factor * chin_bias, expansion_factor
+        )
         expanded_landmarks = lower_lip_landmarks.copy()
         expanded_landmarks[:, 0] = center[0] + offsets[:, 0] * expansion_factor
         expanded_landmarks[:, 1] = center[1] + offsets[:, 1] * scale_y
@@ -1510,9 +1754,9 @@ def create_lower_mouth_mask(
         max_x, max_y = np.max(expanded_landmarks, axis=0)
 
         # Add padding *after* initial min/max calculation
-        padding_ratio = 0.1 # Percentage padding
+        padding_ratio = 0.1  # Percentage padding
         padding_x = int((max_x - min_x) * padding_ratio)
-        padding_y = int((max_y - min_y) * padding_ratio) # Use y-range for y-padding
+        padding_y = int((max_y - min_y) * padding_ratio)  # Use y-range for y-padding
 
         # Apply padding and clamp to frame boundaries
         frame_h, frame_w = frame.shape[:2]
@@ -1520,7 +1764,6 @@ def create_lower_mouth_mask(
         min_y = max(0, min_y - padding_y)
         max_x = min(frame_w, max_x + padding_x)
         max_y = min(frame_h, max_y + padding_y)
-
 
         if max_x > min_x and max_y > min_y:
             # Create the mask ROI
@@ -1535,8 +1778,8 @@ def create_lower_mouth_mask(
             cv2.fillPoly(mask_roi, [polygon_relative_to_roi], 255)
 
             # Apply Gaussian blur (GPU-accelerated when available)
-            blur_k_size = getattr(modules.globals, "mask_blur_kernel", 15) # Default 15
-            blur_k_size = max(1, blur_k_size // 2 * 2 + 1) # Ensure odd
+            blur_k_size = getattr(modules.globals, "mask_blur_kernel", 15)  # Default 15
+            blur_k_size = max(1, blur_k_size // 2 * 2 + 1)  # Ensure odd
             mask_roi = gpu_gaussian_blur(mask_roi, (blur_k_size, blur_k_size), 0)
 
             # Place the mask ROI in the full-sized mask
@@ -1545,8 +1788,10 @@ def create_lower_mouth_mask(
             # Extract the masked area from the *original* frame
             mouth_cutout = frame[min_y:max_y, min_x:max_x].copy()
 
-            lower_lip_polygon = expanded_landmarks # Return polygon in original frame coords
-            mouth_box = (min_x, min_y, max_x, max_y) # Return the calculated box
+            lower_lip_polygon = (
+                expanded_landmarks  # Return polygon in original frame coords
+            )
+            mouth_box = (min_x, min_y, max_x, max_y)  # Return the calculated box
         else:
             # print("Warning: Invalid mouth mask bounding box after padding/clamping.") # Optional debug
             pass
@@ -1555,10 +1800,9 @@ def create_lower_mouth_mask(
         # print(f"Warning: Landmark index out of bounds during mouth mask creation: {idx_e}") # Optional debug
         pass
     except Exception as e:
-        print(f"Error in create_lower_mouth_mask: {e}") # Print unexpected errors
+        print(f"Error in create_lower_mouth_mask: {e}")  # Print unexpected errors
         # import traceback
         # traceback.print_exc()
-        pass
 
     # Return values, ensuring defaults if errors occurred
     return mask, mouth_cutout, mouth_box, lower_lip_polygon
@@ -1569,15 +1813,24 @@ def draw_mouth_mask_visualization(
 ) -> Frame:
 
     # Validate inputs
-    if frame is None or face is None or mouth_mask_data is None or len(mouth_mask_data) != 4:
-        return frame # Return original frame if inputs are invalid
+    if (
+        frame is None
+        or face is None
+        or mouth_mask_data is None
+        or len(mouth_mask_data) != 4
+    ):
+        return frame  # Return original frame if inputs are invalid
 
     mask, mouth_cutout, box, lower_lip_polygon = mouth_mask_data
-    (min_x, min_y, max_x, max_y) = box
+    min_x, min_y, max_x, max_y = box
 
     # Check if polygon is valid for drawing
-    if lower_lip_polygon is None or not isinstance(lower_lip_polygon, np.ndarray) or len(lower_lip_polygon) < 3:
-        return frame # Cannot draw without a valid polygon
+    if (
+        lower_lip_polygon is None
+        or not isinstance(lower_lip_polygon, np.ndarray)
+        or len(lower_lip_polygon) < 3
+    ):
+        return frame  # Cannot draw without a valid polygon
 
     vis_frame = frame.copy()
     height, width = vis_frame.shape[:2]
@@ -1591,32 +1844,46 @@ def draw_mouth_mask_visualization(
         return frame
 
     if max_x <= min_x or max_y <= min_y:
-        return frame # Invalid box
+        return frame  # Invalid box
 
     # Draw the lower lip polygon (green outline)
     try:
-         # Ensure polygon points are within frame boundaries before drawing
-         safe_polygon = lower_lip_polygon.copy()
-         safe_polygon[:, 0] = np.clip(safe_polygon[:, 0], 0, width - 1)
-         safe_polygon[:, 1] = np.clip(safe_polygon[:, 1], 0, height - 1)
-         cv2.polylines(vis_frame, [safe_polygon.astype(np.int32)], isClosed=True, color=(0, 255, 0), thickness=2)
+        # Ensure polygon points are within frame boundaries before drawing
+        safe_polygon = lower_lip_polygon.copy()
+        safe_polygon[:, 0] = np.clip(safe_polygon[:, 0], 0, width - 1)
+        safe_polygon[:, 1] = np.clip(safe_polygon[:, 1], 0, height - 1)
+        cv2.polylines(
+            vis_frame,
+            [safe_polygon.astype(np.int32)],
+            isClosed=True,
+            color=(0, 255, 0),
+            thickness=2,
+        )
     except Exception as e:
-        print(f"Error drawing polygon for visualization: {e}") # Optional debug
-        pass
+        print(f"Error drawing polygon for visualization: {e}")  # Optional debug
 
     # Draw bounding box (red rectangle)
     cv2.rectangle(vis_frame, (min_x, min_y), (max_x, max_y), (0, 0, 255), 2)
 
     # Optional: Add labels
-    label_pos_y = min_y - 10 if min_y > 20 else max_y + 15 # Adjust position based on box location
+    label_pos_y = (
+        min_y - 10 if min_y > 20 else max_y + 15
+    )  # Adjust position based on box location
     label_pos_x = min_x
     try:
-        cv2.putText(vis_frame, "Mouth Mask", (label_pos_x, label_pos_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+        cv2.putText(
+            vis_frame,
+            "Mouth Mask",
+            (label_pos_x, label_pos_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
     except Exception as e:
         # print(f"Error drawing text for visualization: {e}") # Optional debug
         pass
-
 
     return vis_frame
 
@@ -1625,21 +1892,26 @@ def apply_mouth_area(
     frame: np.ndarray,
     mouth_cutout: np.ndarray,
     mouth_box: tuple,
-    face_mask: np.ndarray, # Full face mask (for blending edges)
-    mouth_polygon: np.ndarray, # Specific polygon for the mouth area itself
+    face_mask: np.ndarray,  # Full face mask (for blending edges)
+    mouth_polygon: np.ndarray,  # Specific polygon for the mouth area itself
 ) -> np.ndarray:
 
     # Basic validation
-    if (frame is None or mouth_cutout is None or mouth_box is None or
-        face_mask is None or mouth_polygon is None):
+    if (
+        frame is None
+        or mouth_cutout is None
+        or mouth_box is None
+        or face_mask is None
+        or mouth_polygon is None
+    ):
         # print("Warning: Invalid input (None value) to apply_mouth_area") # Optional debug
         return frame
-    if (mouth_cutout.size == 0 or face_mask.size == 0 or len(mouth_polygon) < 3):
+    if mouth_cutout.size == 0 or face_mask.size == 0 or len(mouth_polygon) < 3:
         # print("Warning: Invalid input (empty array/polygon) to apply_mouth_area") # Optional debug
         return frame
 
-    try: # Wrap main logic in try-except
-        min_x, min_y, max_x, max_y = map(int, mouth_box) # Ensure integer coords
+    try:  # Wrap main logic in try-except
+        min_x, min_y, max_x, max_y = map(int, mouth_box)  # Ensure integer coords
         box_width = max_x - min_x
         box_height = max_y - min_y
 
@@ -1659,7 +1931,7 @@ def apply_mouth_area(
         box_height = max_y - min_y
         if box_width <= 0 or box_height <= 0:
             # print("Warning: ROI became invalid after clamping in apply_mouth_area.")
-            return frame # ROI is invalid
+            return frame  # ROI is invalid
 
         roi = frame[min_y:max_y, min_x:max_x]
 
@@ -1671,14 +1943,18 @@ def apply_mouth_area(
         # Resize mouth cutout from original frame to fit the ROI size
         resized_mouth_cutout = None
         if roi.shape[:2] != mouth_cutout.shape[:2]:
-             # Check if mouth_cutout has valid dimensions before resizing
-             if mouth_cutout.shape[0] > 0 and mouth_cutout.shape[1] > 0:
-                  resized_mouth_cutout = gpu_resize(mouth_cutout, (box_width, box_height), interpolation=cv2.INTER_LINEAR)
-             else:
-                 # print("Warning: mouth_cutout has invalid dimensions, cannot resize.")
-                 return frame # Cannot proceed without valid cutout
+            # Check if mouth_cutout has valid dimensions before resizing
+            if mouth_cutout.shape[0] > 0 and mouth_cutout.shape[1] > 0:
+                resized_mouth_cutout = gpu_resize(
+                    mouth_cutout,
+                    (box_width, box_height),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            else:
+                # print("Warning: mouth_cutout has invalid dimensions, cannot resize.")
+                return frame  # Cannot proceed without valid cutout
         else:
-             resized_mouth_cutout = mouth_cutout
+            resized_mouth_cutout = mouth_cutout
 
         # If resize failed or original was invalid
         if resized_mouth_cutout is None or resized_mouth_cutout.size == 0:
@@ -1694,7 +1970,9 @@ def apply_mouth_area(
         # Feather the edges with Gaussian blur for smooth blending
         feather_amount = max(1, min(30, min(box_width, box_height) // 8))
         kernel_size = 2 * feather_amount + 1
-        feathered_mask = cv2.GaussianBlur(polygon_mask_roi.astype(np.float32), (kernel_size, kernel_size), 0)
+        feathered_mask = cv2.GaussianBlur(
+            polygon_mask_roi.astype(np.float32), (kernel_size, kernel_size), 0
+        )
 
         # Normalize to [0.0, 1.0]
         max_val = feathered_mask.max()
@@ -1709,16 +1987,20 @@ def apply_mouth_area(
             inv_mask = 1.0 - mask_3ch
 
             # Blend: (original_mouth * mask) + (swapped_face * (1 - mask))
-            blended_roi = (resized_mouth_cutout.astype(np.float32) * mask_3ch +
-                           roi.astype(np.float32) * inv_mask)
+            blended_roi = (
+                resized_mouth_cutout.astype(np.float32) * mask_3ch
+                + roi.astype(np.float32) * inv_mask
+            )
 
-            frame[min_y:max_y, min_x:max_x] = np.clip(blended_roi, 0, 255).astype(np.uint8)
+            frame[min_y:max_y, min_x:max_x] = np.clip(blended_roi, 0, 255).astype(
+                np.uint8
+            )
 
     except Exception as e:
-        print(f"Error applying mouth area: {e}") # Optional debug
+        print(f"Error applying mouth area: {e}")  # Optional debug
         # import traceback
         # traceback.print_exc()
-        pass # Don't crash, just return the frame as is
+        pass  # Don't crash, just return the frame as is
 
     return frame
 
@@ -1728,19 +2010,23 @@ def create_face_mask(face: Face, frame: Frame) -> np.ndarray:
     if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
         return np.zeros((0, 0), dtype=np.uint8)
 
-    mask = np.zeros(frame.shape[:2], dtype=np.uint8) # Start with uint8
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)  # Start with uint8
 
     # Validate inputs
-    if face is None or not hasattr(face, 'landmark_2d_106'):
+    if face is None or not hasattr(face, "landmark_2d_106"):
         # print("Warning: Invalid face or frame for create_face_mask.")
-        return mask # Return empty mask
+        return mask  # Return empty mask
 
     landmarks = face.landmark_2d_106
-    if landmarks is None or not isinstance(landmarks, np.ndarray) or landmarks.shape[0] < 106:
+    if (
+        landmarks is None
+        or not isinstance(landmarks, np.ndarray)
+        or landmarks.shape[0] < 106
+    ):
         # print("Warning: Invalid or insufficient landmarks for face mask.")
-        return mask # Return empty mask
+        return mask  # Return empty mask
 
-    try: # Wrap main logic in try-except
+    try:  # Wrap main logic in try-except
         # Filter out non-finite landmark values
         if not np.all(np.isfinite(landmarks)):
             # print("Warning: Non-finite values detected in landmarks for face mask.")
@@ -1758,49 +2044,52 @@ def create_face_mask(face: Face, frame: Frame) -> np.ndarray:
         if eyebrows.shape[0] > 0:
             chin = landmarks_int[16]
             eyebrow_center = np.mean(eyebrows, axis=0)
-            
+
             # Vector from chin to eyebrows (upwards)
             up_vector = eyebrow_center - chin
             norm = np.linalg.norm(up_vector)
             if norm > 0:
                 up_vector /= norm
-                
+
                 # Extend upwards by 1.0 of the chin-to-eyebrow distance (aggressive coverage)
                 # This ensures the mask covers the entire forehead for proper blending
                 forehead_offset = up_vector * (norm * 1.0)
-                
+
                 # Shift eyebrows up to create forehead points
                 forehead_points = eyebrows + forehead_offset
-                
+
                 # Expand the top points slightly outwards to cover forehead corners
                 # Calculate the center of the new top points
                 top_center = np.mean(forehead_points, axis=0)
-                
+
                 # Expand outwards by 20%
                 forehead_points = (forehead_points - top_center) * 1.2 + top_center
-                
+
                 # Combine outline and forehead points
-                face_outline = np.concatenate((face_outline, forehead_points.astype(np.int32)), axis=0)
+                face_outline = np.concatenate(
+                    (face_outline, forehead_points.astype(np.int32)), axis=0
+                )
 
         # Calculate convex hull of these points
         # Use try-except as convexHull can fail on degenerate input
         try:
-             hull = cv2.convexHull(face_outline.astype(np.float32)) # Use float for accuracy
-             if hull is None or len(hull) < 3:
-                 # print("Warning: Convex hull calculation failed or returned too few points.")
-                 # Fallback: use bounding box of landmarks? Or just return empty mask?
-                 return mask
+            hull = cv2.convexHull(
+                face_outline.astype(np.float32)
+            )  # Use float for accuracy
+            if hull is None or len(hull) < 3:
+                # print("Warning: Convex hull calculation failed or returned too few points.")
+                # Fallback: use bounding box of landmarks? Or just return empty mask?
+                return mask
 
-             # Draw the filled convex hull on the mask
-             cv2.fillConvexPoly(mask, hull.astype(np.int32), 255)
+            # Draw the filled convex hull on the mask
+            cv2.fillConvexPoly(mask, hull.astype(np.int32), 255)
         except Exception as hull_e:
-             print(f"Error creating convex hull for face mask: {hull_e}")
-             return mask # Return empty mask on error
-
+            print(f"Error creating convex hull for face mask: {hull_e}")
+            return mask  # Return empty mask on error
 
         # Apply Gaussian blur to feather the mask edges (GPU-accelerated when available)
-        blur_k_size = getattr(modules.globals, "face_mask_blur", 31) # Default 31
-        blur_k_size = max(1, blur_k_size // 2 * 2 + 1) # Ensure odd and positive
+        blur_k_size = getattr(modules.globals, "face_mask_blur", 31)  # Default 31
+        blur_k_size = max(1, blur_k_size // 2 * 2 + 1)  # Ensure odd and positive
         mask = gpu_gaussian_blur(mask, (blur_k_size, blur_k_size), 0)
 
         # --- Optional: Return float mask for apply_mouth_area ---
@@ -1811,12 +2100,11 @@ def create_face_mask(face: Face, frame: Frame) -> np.ndarray:
         # print("Warning: Landmark index out of bounds for face mask.") # Optional debug
         pass
     except Exception as e:
-        print(f"Error creating face mask: {e}") # Print unexpected errors
+        print(f"Error creating face mask: {e}")  # Print unexpected errors
         # import traceback
         # traceback.print_exc()
-        pass
 
-    return mask # Return uint8 mask
+    return mask  # Return uint8 mask
 
 
 def apply_color_transfer(source, target):
@@ -1826,14 +2114,14 @@ def apply_color_transfer(source, target):
     # Input validation
     if source is None or target is None or source.size == 0 or target.size == 0:
         # print("Warning: Invalid input to apply_color_transfer.")
-        return source # Return original source if invalid input
+        return source  # Return original source if invalid input
 
     # Ensure images are 3-channel BGR uint8
     if len(source.shape) != 3 or source.shape[2] != 3 or source.dtype != np.uint8:
         # print("Warning: Source image for color transfer is not uint8 BGR.")
         # Attempt conversion if possible, otherwise return original
         try:
-            if len(source.shape) == 2: # Grayscale
+            if len(source.shape) == 2:  # Grayscale
                 source = cv2.cvtColor(source, cv2.COLOR_GRAY2BGR)
             source = np.clip(source, 0, 255).astype(np.uint8)
             if len(source.shape) != 3 or source.shape[2] != 3:
@@ -1843,15 +2131,15 @@ def apply_color_transfer(source, target):
     if len(target.shape) != 3 or target.shape[2] != 3 or target.dtype != np.uint8:
         # print("Warning: Target image for color transfer is not uint8 BGR.")
         try:
-            if len(target.shape) == 2: # Grayscale
+            if len(target.shape) == 2:  # Grayscale
                 target = cv2.cvtColor(target, cv2.COLOR_GRAY2BGR)
             target = np.clip(target, 0, 255).astype(np.uint8)
             if len(target.shape) != 3 or target.shape[2] != 3:
                 raise ValueError("Conversion failed")
         except Exception:
-             return source # Return original source if target invalid
+            return source  # Return original source if target invalid
 
-    result_bgr = source # Default to original source in case of errors
+    result_bgr = source  # Default to original source in case of errors
 
     try:
         # Convert to float32 [0, 1] range for LAB conversion
@@ -1877,7 +2165,9 @@ def apply_color_transfer(source, target):
         # target_std = np.maximum(target_std, epsilon) # Target std can be small
 
         # Perform color transfer in LAB space
-        result_lab = (source_lab - source_mean) * (target_std / source_std) + target_mean
+        result_lab = (source_lab - source_mean) * (
+            target_std / source_std
+        ) + target_mean
 
         # --- No explicit clipping needed in LAB space typically ---
         # Clipping is handled implicitly by the conversion back to BGR and then to uint8
@@ -1892,12 +2182,12 @@ def apply_color_transfer(source, target):
         result_bgr = (result_bgr_float * 255.0).astype("uint8")
 
     except cv2.error as e:
-         # print(f"OpenCV error during color transfer: {e}. Returning original source.") # Optional debug
-         return source # Return original source if conversion fails
+        # print(f"OpenCV error during color transfer: {e}. Returning original source.") # Optional debug
+        return source  # Return original source if conversion fails
     except Exception as e:
-         # print(f"Unexpected color transfer error: {e}. Returning original source.") # Optional debug
-         # import traceback
-         # traceback.print_exc()
-         return source
+        # print(f"Unexpected color transfer error: {e}. Returning original source.") # Optional debug
+        # import traceback
+        # traceback.print_exc()
+        return source
 
     return result_bgr

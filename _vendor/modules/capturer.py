@@ -9,12 +9,12 @@ def get_video_frame(video_path: str, frame_number: int = 0) -> Any:
     capture = cv2.VideoCapture(video_path)
 
     # Set MJPEG format to ensure correct color space handling
-    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-    
+    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
     # Only force RGB conversion if color correction is enabled
     if modules.globals.color_correction:
         capture.set(cv2.CAP_PROP_CONVERT_RGB, 1)
-    
+
     frame_total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
     if frame_total <= 0:
         capture.release()

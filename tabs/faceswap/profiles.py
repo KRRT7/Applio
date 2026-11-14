@@ -23,7 +23,14 @@ import time
 
 PROFILES_DIR = os.path.join(os.getcwd(), "logs", "profiles")
 
-FACE_KEYS = ("swap_model", "enhancer", "mouth_mask", "sharpness", "color_correction", "pixel_boost")
+FACE_KEYS = (
+    "swap_model",
+    "enhancer",
+    "mouth_mask",
+    "sharpness",
+    "color_correction",
+    "pixel_boost",
+)
 VOICE_KEYS = ("model_file", "index_file", "pitch", "index_rate", "protect", "f0_method")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
@@ -70,10 +77,15 @@ def load_profile(name):
     with open(os.path.join(d, "profile.json"), encoding="utf-8") as f:
         data = json.load(f)
     faces_dir = os.path.join(d, "faces")
-    data["faces"] = sorted(
-        os.path.join(faces_dir, f) for f in os.listdir(faces_dir)
-        if f.lower().endswith(IMAGE_EXTS)
-    ) if os.path.isdir(faces_dir) else []
+    data["faces"] = (
+        sorted(
+            os.path.join(faces_dir, f)
+            for f in os.listdir(faces_dir)
+            if f.lower().endswith(IMAGE_EXTS)
+        )
+        if os.path.isdir(faces_dir)
+        else []
+    )
     data.setdefault("face", {})
     data.setdefault("voice", {})
     return data

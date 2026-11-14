@@ -30,7 +30,9 @@ MODEL_SIZES: Dict[str, int] = {
 }
 
 # Models not hosted in the Deep-Live-Cam Hugging Face repo.
-_FACEFUSION_ASSETS = "https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/"
+_FACEFUSION_ASSETS = (
+    "https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/"
+)
 MODEL_URLS: Dict[str, str] = {
     f"hyperswap_{v}_256.onnx": f"{_FACEFUSION_ASSETS}hyperswap_{v}_256.onnx"
     for v in ("1a", "1b", "1c")
@@ -132,7 +134,9 @@ def _download(name: str, url: str, target: str, size: Optional[int]) -> bool:
 
     downloaded = os.path.getsize(partial)
     if size is not None and downloaded != size:
-        print(f"[DLC.MODELS] {name} is {downloaded} bytes, expected {size}. Discarding.")
+        print(
+            f"[DLC.MODELS] {name} is {downloaded} bytes, expected {size}. Discarding."
+        )
         try:
             os.remove(partial)
         except OSError:

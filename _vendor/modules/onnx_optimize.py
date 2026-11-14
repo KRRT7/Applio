@@ -136,6 +136,7 @@ def _pin_input_shape(model, input_shape) -> bool:
 # Pass 1: Fold Shape → Gather chains into constants
 # ---------------------------------------------------------------------------
 
+
 def _fold_shape_gather(model, input_shape) -> bool:
     """Replace dynamic Shape→Gather chains with constants when input size is known.
 
@@ -164,7 +165,9 @@ def _fold_shape_gather(model, input_shape) -> bool:
 
     # Extract inferred shapes
     value_shapes = {}
-    for vi in list(model_inferred.graph.value_info) + list(graph.input) + list(graph.output):
+    for vi in (
+        list(model_inferred.graph.value_info) + list(graph.input) + list(graph.output)
+    ):
         shape_dims = vi.type.tensor_type.shape.dim
         shape = []
         for d in shape_dims:
@@ -252,6 +255,7 @@ def _fold_shape_gather(model, input_shape) -> bool:
 # via MIL tensor_operation.pad and this entire pass can be deleted.
 # ---------------------------------------------------------------------------
 
+
 def _decompose_reflect_pad(model) -> bool:
     """Rewrite Pad(reflect) as Slice+Concat sequences CoreML can handle."""
     from onnx import numpy_helper, helper
@@ -321,60 +325,72 @@ def _decompose_reflect_pad(model) -> bool:
             top = []
             for i in range(h_pad, 0, -1):
                 name = f"_rp_t{uid()}"
-                new_nodes.append(helper.make_node(
-                    "Slice",
-                    inputs=[current, f"_rp_p{i}", f"_rp_p{i+1}", "_rp_ax2"],
-                    outputs=[name],
-                ))
+                new_nodes.append(
+                    helper.make_node(
+                        "Slice",
+                        inputs=[current, f"_rp_p{i}", f"_rp_p{i+1}", "_rp_ax2"],
+                        outputs=[name],
+                    )
+                )
                 top.append(name)
 
             bot = []
             for i in range(1, h_pad + 1):
                 name = f"_rp_b{uid()}"
-                new_nodes.append(helper.make_node(
-                    "Slice",
-                    inputs=[current, f"_rp_n{i+1}", f"_rp_n{i}", "_rp_ax2"],
-                    outputs=[name],
-                ))
+                new_nodes.append(
+                    helper.make_node(
+                        "Slice",
+                        inputs=[current, f"_rp_n{i+1}", f"_rp_n{i}", "_rp_ax2"],
+                        outputs=[name],
+                    )
+                )
                 bot.append(name)
 
             h_out = f"_rp_h{uid()}"
-            new_nodes.append(helper.make_node(
-                "Concat", inputs=top + [current] + bot, outputs=[h_out], axis=2
-            ))
+            new_nodes.append(
+                helper.make_node(
+                    "Concat", inputs=top + [current] + bot, outputs=[h_out], axis=2
+                )
+            )
             current = h_out
 
         if w_pad > 0:
             left = []
             for i in range(w_pad, 0, -1):
                 name = f"_rp_l{uid()}"
-                new_nodes.append(helper.make_node(
-                    "Slice",
-                    inputs=[current, f"_rp_p{i}", f"_rp_p{i+1}", "_rp_ax3"],
-                    outputs=[name],
-                ))
+                new_nodes.append(
+                    helper.make_node(
+                        "Slice",
+                        inputs=[current, f"_rp_p{i}", f"_rp_p{i+1}", "_rp_ax3"],
+                        outputs=[name],
+                    )
+                )
                 left.append(name)
 
             right = []
             for i in range(1, w_pad + 1):
                 name = f"_rp_r{uid()}"
-                new_nodes.append(helper.make_node(
-                    "Slice",
-                    inputs=[current, f"_rp_n{i+1}", f"_rp_n{i}", "_rp_ax3"],
-                    outputs=[name],
-                ))
+                new_nodes.append(
+                    helper.make_node(
+                        "Slice",
+                        inputs=[current, f"_rp_n{i+1}", f"_rp_n{i}", "_rp_ax3"],
+                        outputs=[name],
+                    )
+                )
                 right.append(name)
 
-            new_nodes.append(helper.make_node(
-                "Concat",
-                inputs=left + [current] + right,
-                outputs=[node.output[0]],
-                axis=3,
-            ))
+            new_nodes.append(
+                helper.make_node(
+                    "Concat",
+                    inputs=left + [current] + right,
+                    outputs=[node.output[0]],
+                    axis=3,
+                )
+            )
         elif h_pad > 0:
-            new_nodes.append(helper.make_node(
-                "Identity", inputs=[current], outputs=[node.output[0]]
-            ))
+            new_nodes.append(
+                helper.make_node("Identity", inputs=[current], outputs=[node.output[0]])
+            )
 
     # Remove old Pad initializers
     clean_inits = [i for i in graph.initializer if i.name not in pad_init_names]
@@ -389,6 +405,7 @@ def _decompose_reflect_pad(model) -> bool:
 # ---------------------------------------------------------------------------
 # Pass 3: Decompose Split → Slice pairs
 # ---------------------------------------------------------------------------
+
 
 def _decompose_split(model) -> bool:
     """Rewrite Split(axis=1) as Slice pairs that CoreML can handle.
@@ -474,6 +491,7 @@ def _decompose_split(model) -> bool:
 # and the ORT floor is raised, delete this pass.
 # ---------------------------------------------------------------------------
 
+
 def _rewrite_scalar_gather(model) -> bool:
     """Rewrite Gather(data, scalar_idx) as Gather(data, [scalar_idx]) + Squeeze.
 
@@ -520,7 +538,9 @@ def _rewrite_scalar_gather(model) -> bool:
                     "Constant",
                     inputs=[],
                     outputs=[idx_1d_name],
-                    value=helper.make_tensor(idx_1d_name, TensorProto.INT64, [1], [val]),
+                    value=helper.make_tensor(
+                        idx_1d_name, TensorProto.INT64, [1], [val]
+                    ),
                 )
                 gather_out = f"{n.output[0]}_pre_squeeze_{rewrote}"
                 new_gather = helper.make_node(
@@ -545,7 +565,9 @@ def _rewrite_scalar_gather(model) -> bool:
                         "Constant",
                         inputs=[],
                         outputs=[axes_name],
-                        value=helper.make_tensor(axes_name, TensorProto.INT64, [1], [axis]),
+                        value=helper.make_tensor(
+                            axes_name, TensorProto.INT64, [1], [axis]
+                        ),
                     )
                     squeeze = helper.make_node(
                         "Squeeze",
@@ -569,6 +591,7 @@ def _rewrite_scalar_gather(model) -> bool:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _drop_broadcast_expand(model) -> bool:
     """Remove ``Expand(s, Shape(t))`` feeding only ``Op(t, ·)`` broadcasts.
@@ -608,13 +631,18 @@ def _drop_broadcast_expand(model) -> bool:
         if node.op_type != "Expand" or len(node.input) != 2:
             continue
         shape_node = producer.get(node.input[1])
-        if shape_node is None or shape_node.op_type != "Shape" or len(shape_node.attribute):
+        if (
+            shape_node is None
+            or shape_node.op_type != "Shape"
+            or len(shape_node.attribute)
+        ):
             continue  # Shape with start/end attributes is a slice; skip
         target = shape_node.input[0]
         out = node.output[0]
         uses = consumers.get(out, [])
         if not uses or out in graph_outputs:
             continue
+
         def other(use):
             a, b = use.input
             return b if a == out else a

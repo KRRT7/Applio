@@ -60,7 +60,12 @@ ASYNC_SWAP_FACE_LOSS_GRACE_S = 0.5
 
 # Kept in step with modules.processors.frame.face_swapper.SWAP_MODELS (not
 # imported here so configure() does not load the swapper module).
-SWAP_MODELS = ("inswapper_128", "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256")
+SWAP_MODELS = (
+    "inswapper_128",
+    "hyperswap_1a_256",
+    "hyperswap_1b_256",
+    "hyperswap_1c_256",
+)
 
 ENHANCERS = {
     "gfpgan": "face_enhancer",
@@ -86,17 +91,19 @@ class LiveConfig:
     # source_path's, which gives a steadier identity (in our tests 4 photos
     # raised identity similarity from 0.785 to 0.810 on held-out frames).
     source_paths: Sequence[str] = ()
-    swap_model: str = "hyperswap_1c_256"    # see SWAP_MODELS; fastest + best on Apple Silicon in our benchmark
+    swap_model: str = (
+        "hyperswap_1c_256"  # see SWAP_MODELS; fastest + best on Apple Silicon in our benchmark
+    )
     # HyperSwap only: swap at 512 px as four 256 px sub-pixel passes. Sharper
     # face; the swap costs ~4x.
     pixel_boost: bool = False
-    enhancer: Optional[str] = None          # None | "gfpgan" | "gpen256" | "gpen512"
+    enhancer: Optional[str] = None  # None | "gfpgan" | "gpen256" | "gpen512"
     execution_providers: Sequence[str] = field(
         default_factory=lambda: [suggest_default_execution_provider()]
-    )                                       # short names: "coreml", "cuda", "cpu", ...
+    )  # short names: "coreml", "cuda", "cpu", ...
     det_size: int = modules.globals.DEFAULT_DET_SIZE  # 160 | 320 | 640
     many_faces: bool = False
-    mouth_mask: float = 0.0                 # 0 = off, 100 = original mouth down to chin
+    mouth_mask: float = 0.0  # 0 = off, 100 = original mouth down to chin
     color_correction: bool = False
     poisson_blend: bool = False
     opacity: float = 1.0
@@ -117,9 +124,13 @@ class LiveConfig:
 def configure(config: LiveConfig) -> None:
     """Apply a LiveConfig to the process-wide settings the processors read."""
     if config.enhancer is not None and config.enhancer not in ENHANCERS:
-        raise ValueError(f"unknown enhancer {config.enhancer!r}; use one of {sorted(ENHANCERS)}")
+        raise ValueError(
+            f"unknown enhancer {config.enhancer!r}; use one of {sorted(ENHANCERS)}"
+        )
     if config.swap_model not in SWAP_MODELS:
-        raise ValueError(f"unknown swap model {config.swap_model!r}; use one of {SWAP_MODELS}")
+        raise ValueError(
+            f"unknown swap model {config.swap_model!r}; use one of {SWAP_MODELS}"
+        )
     if not 0.0 <= config.stabilization <= 1.0:
         raise ValueError("stabilization must be between 0 and 1")
     if config.det_size not in (160, 320, 640):
@@ -194,9 +205,11 @@ def preload_models() -> None:
 
     get_face_analyser()
     for processor in get_frame_processors_modules(modules.globals.frame_processors):
-        loader = (getattr(processor, "get_face_swapper", None)
-                  or getattr(processor, "get_face_enhancer", None)
-                  or getattr(processor, "get_enhancer", None))
+        loader = (
+            getattr(processor, "get_face_swapper", None)
+            or getattr(processor, "get_face_enhancer", None)
+            or getattr(processor, "get_enhancer", None)
+        )
         if loader is not None:
             loader()
 
@@ -226,8 +239,8 @@ class LandmarkSmoother:
     (a different face, or the same one re-found elsewhere).
     """
 
-    CUTOFF_RANGE = (20.0, 4.0)      # Hz at strength 0 and 1
-    MAX_JUMP = 2.0                  # inter-ocular distances
+    CUTOFF_RANGE = (20.0, 4.0)  # Hz at strength 0 and 1
+    MAX_JUMP = 2.0  # inter-ocular distances
 
     def __init__(self) -> None:
         self.reset()
@@ -244,8 +257,13 @@ class LandmarkSmoother:
     def __call__(self, kps: np.ndarray, t: float, strength: float) -> np.ndarray:
         kps = np.asarray(kps, dtype=np.float64)
         iod = float(np.linalg.norm(kps[0] - kps[1])) or 1.0
-        if self._x is None or t <= self._t or (
-            float(np.linalg.norm(kps[:2].mean(0) - self._x[:2].mean(0))) > self.MAX_JUMP * iod
+        if (
+            self._x is None
+            or t <= self._t
+            or (
+                float(np.linalg.norm(kps[:2].mean(0) - self._x[:2].mean(0)))
+                > self.MAX_JUMP * iod
+            )
         ):
             self._x, self._t = kps, t
             return kps.astype(np.float32)
@@ -273,9 +291,9 @@ class Detection:
     """One frame after FramePipeline.detect(), ready for render()."""
 
     frame: Frame
-    target_face: object = None            # single-face mode
-    many_faces: Optional[list] = None     # many-faces mode
-    mapped: bool = False                  # map-faces mode: render() does its own detection
+    target_face: object = None  # single-face mode
+    many_faces: Optional[list] = None  # many-faces mode
+    mapped: bool = False  # map-faces mode: render() does its own detection
 
 
 class FramePipeline:
@@ -291,7 +309,9 @@ class FramePipeline:
     """
 
     def __init__(self, camera_fps: float = 30.0):
-        self._frame_processors = get_frame_processors_modules(modules.globals.frame_processors)
+        self._frame_processors = get_frame_processors_modules(
+            modules.globals.frame_processors
+        )
         self._async_swapper = None
         self._face_lost_at = None
         self._source_image = None
@@ -338,14 +358,20 @@ class FramePipeline:
                 if face is None or strength <= 0 or getattr(face, "kps", None) is None:
                     self._smoother.reset()
                 else:
-                    face = _with_kps(face, self._smoother(face.kps, self._clock, strength))
+                    face = _with_kps(
+                        face, self._smoother(face.kps, self._clock, strength)
+                    )
                 self._cached_target_face = face
                 self._cached_many_faces = None
 
-        det = Detection(temp_frame, self._cached_target_face, self._cached_many_faces or None)
+        det = Detection(
+            temp_frame, self._cached_target_face, self._cached_many_faces or None
+        )
         # Fast detection skips the 2d106 landmark model, but the mouth mask
         # needs it. Attach landmarks on demand.
-        faces = det.many_faces or ([det.target_face] if det.target_face is not None else None)
+        faces = det.many_faces or (
+            [det.target_face] if det.target_face is not None else None
+        )
         if modules.globals.mouth_mask and faces:
             ensure_landmarks(temp_frame, faces)
         return det
@@ -366,8 +392,13 @@ class FramePipeline:
 
         if modules.globals.show_fps:
             cv2.putText(
-                temp_frame, f"FPS: {self.fps:.1f}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2,
+                temp_frame,
+                f"FPS: {self.fps:.1f}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2,
             )
         return temp_frame
 
@@ -416,7 +447,9 @@ class FramePipeline:
                 self._source_image = self._load_source(paths)
                 # Keep retrying while nothing loads (a photo may still be
                 # being written); otherwise cache until the set changes.
-                self._last_source_paths = paths if self._source_image is not None else None
+                self._last_source_paths = (
+                    paths if self._source_image is not None else None
+                )
         else:
             self._last_source_paths = None
             source_path = paths[0] if paths else None
@@ -451,13 +484,19 @@ class FramePipeline:
         for fp in self._frame_processors:
             if fp.NAME == "DLC.FACE-ENHANCER":
                 if modules.globals.fp_ui["face_enhancer"]:
-                    temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
+                    temp_frame = fp.process_frame(
+                        None, temp_frame, detected_faces=cached_faces
+                    )
             elif fp.NAME == "DLC.FACE-ENHANCER-GPEN256":
                 if modules.globals.fp_ui.get("face_enhancer_gpen256", False):
-                    temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
+                    temp_frame = fp.process_frame(
+                        None, temp_frame, detected_faces=cached_faces
+                    )
             elif fp.NAME == "DLC.FACE-ENHANCER-GPEN512":
                 if modules.globals.fp_ui.get("face_enhancer_gpen512", False):
-                    temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
+                    temp_frame = fp.process_frame(
+                        None, temp_frame, detected_faces=cached_faces
+                    )
             elif fp.NAME == "DLC.FACE-SWAPPER":
                 swapped_bboxes = []
                 if modules.globals.many_faces and many:
@@ -530,7 +569,12 @@ class DelayedSink:
     running. 0 forwards immediately.
     """
 
-    def __init__(self, sink: FrameSink, delay_ms: float = 0.0, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        sink: FrameSink,
+        delay_ms: float = 0.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.sink = sink
         self.delay_ms = float(delay_ms)
         self._clock = clock
@@ -660,9 +704,13 @@ class LiveSession:
         )
         self._pipeline = FramePipeline(self.camera_fps)
         self._threads = [
-            threading.Thread(target=self._capture_loop, name="dlc-capture", daemon=True),
+            threading.Thread(
+                target=self._capture_loop, name="dlc-capture", daemon=True
+            ),
             threading.Thread(target=self._detect_loop, name="dlc-detect", daemon=True),
-            threading.Thread(target=self._process_loop, name="dlc-process", daemon=True),
+            threading.Thread(
+                target=self._process_loop, name="dlc-process", daemon=True
+            ),
         ]
         for t in self._threads:
             t.start()
@@ -768,7 +816,9 @@ class LiveSession:
 # ─── CLI entry point (``run.py --live``) ─────────────────────────────────
 
 
-def run_cli(camera: Optional[int], width: int, height: int, virtual_camera: bool) -> int:
+def run_cli(
+    camera: Optional[int], width: int, height: int, virtual_camera: bool
+) -> int:
     """Run a live session until Ctrl+C, printing FPS once a second."""
     from _vendor.modules.cameras import list_cameras
     from _vendor.modules.virtual_camera import VirtualCameraSink
@@ -806,6 +856,18 @@ def run_cli(camera: Optional[int], width: int, height: int, virtual_camera: bool
 
 
 __all__ = [
-    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "DelayedSink", "Detection", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
-    "LiveSession", "configure", "ensure_models", "preload_models", "run_cli", "swap_image",
+    "ASYNC_SWAP_FACE_LOSS_GRACE_S",
+    "DelayedSink",
+    "Detection",
+    "ENHANCERS",
+    "SWAP_MODELS",
+    "LandmarkSmoother",
+    "FramePipeline",
+    "LiveConfig",
+    "LiveSession",
+    "configure",
+    "ensure_models",
+    "preload_models",
+    "run_cli",
+    "swap_image",
 ]

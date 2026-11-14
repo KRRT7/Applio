@@ -174,19 +174,23 @@ class Audio:
     # ── live diagnostics (read by the UI; written from audio callbacks) ──
 
     def _reset_stats(self):
-        self.input_db = float("-inf")    # mic level after input gain, per block
-        self.output_db = float("-inf")   # converted voice level, per block
-        self.blocks = 0                  # blocks processed
-        self.overruns = 0                # blocks whose processing took longer than the block
-        self.input_overflows = 0         # driver: input samples lost
-        self.output_underflows = 0       # driver: output ran dry (audible dropouts)
+        self.input_db = float("-inf")  # mic level after input gain, per block
+        self.output_db = float("-inf")  # converted voice level, per block
+        self.blocks = 0  # blocks processed
+        self.overruns = 0  # blocks whose processing took longer than the block
+        self.input_overflows = 0  # driver: input samples lost
+        self.output_underflows = 0  # driver: output ran dry (audible dropouts)
         self.callback_errors = 0
         self.last_error = None
         self.block_ms = getattr(self, "block_ms", None)
 
     @staticmethod
     def _db(samples) -> float:
-        rms = float(np.sqrt(np.mean(np.square(samples, dtype=np.float32)))) if len(samples) else 0.0
+        rms = (
+            float(np.sqrt(np.mean(np.square(samples, dtype=np.float32))))
+            if len(samples)
+            else 0.0
+        )
         return 20.0 * np.log10(rms) if rms > 1e-9 else float("-inf")
 
     def _note_status(self, status):
@@ -199,11 +203,16 @@ class Audio:
     def stats(self) -> dict:
         """Snapshot of the live audio diagnostics."""
         return {
-            "input_db": self.input_db, "output_db": self.output_db,
-            "latency_ms": getattr(self, "latency", None), "block_ms": self.block_ms,
-            "blocks": self.blocks, "overruns": self.overruns,
-            "input_overflows": self.input_overflows, "output_underflows": self.output_underflows,
-            "callback_errors": self.callback_errors, "last_error": self.last_error,
+            "input_db": self.input_db,
+            "output_db": self.output_db,
+            "latency_ms": getattr(self, "latency", None),
+            "block_ms": self.block_ms,
+            "blocks": self.blocks,
+            "overruns": self.overruns,
+            "input_overflows": self.input_overflows,
+            "output_underflows": self.output_underflows,
+            "callback_errors": self.callback_errors,
+            "last_error": self.last_error,
         }
 
     def get_input_audio_device(self, index: int):

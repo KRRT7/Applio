@@ -6,7 +6,9 @@ import pytest
 
 from rvc.lib import win_rt
 
-windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows scheduling APIs")
+windows_only = pytest.mark.skipif(
+    sys.platform != "win32", reason="Windows scheduling APIs"
+)
 
 
 def _in_thread(fn):

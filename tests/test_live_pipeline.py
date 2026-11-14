@@ -4,6 +4,7 @@ No model is loaded: face detection and the frame-processor list are stubbed,
 so these exercise control flow only. The source-reload, async-swap, session
 and configure cases are ported from the original Deep-Live-Cam test suite.
 """
+
 import itertools
 import sys
 import threading
@@ -25,18 +26,30 @@ def _frame():
 @pytest.fixture
 def no_faces():
     """A pipeline with no processors and no detections."""
-    with patch.object(live, "get_frame_processors_modules", lambda *_: []), \
-         patch.object(live, "detect_one_face_fast", lambda *_: None), \
-         patch.object(live, "detect_many_faces_fast", lambda *_: None), \
-         patch.object(live, "update_status", lambda *_a, **_k: None):
+    with (
+        patch.object(live, "get_frame_processors_modules", lambda *_: []),
+        patch.object(live, "detect_one_face_fast", lambda *_: None),
+        patch.object(live, "detect_many_faces_fast", lambda *_: None),
+        patch.object(live, "update_status", lambda *_a, **_k: None),
+    ):
         yield
 
 
 @pytest.fixture
 def clean_globals():
     """Restore the live settings each test may change."""
-    keys = ("source_path", "source_paths", "map_faces", "many_faces", "mouth_mask", "live_async_swap",
-            "live_mirror", "show_fps", "live_stabilization", "live_detect_every_frame")
+    keys = (
+        "source_path",
+        "source_paths",
+        "map_faces",
+        "many_faces",
+        "mouth_mask",
+        "live_async_swap",
+        "live_mirror",
+        "show_fps",
+        "live_stabilization",
+        "live_detect_every_frame",
+    )
     saved = {k: getattr(g, k) for k in keys}
     g.source_paths = ()
     g.live_stabilization = 0.0
@@ -62,7 +75,9 @@ class _Swapper:
 
 
 @pytest.mark.parametrize("async_enabled", [False, True])
-def test_clearing_source_stops_swaps_and_same_path_reloads(clean_globals, async_enabled):
+def test_clearing_source_stops_swaps_and_same_path_reloads(
+    clean_globals, async_enabled
+):
     sources, loaded, calls = [], [], []
 
     def load_source(_frame):
@@ -88,10 +103,12 @@ def test_clearing_source_stops_swaps_and_same_path_reloads(clean_globals, async_
 
     g.map_faces = g.many_faces = g.mouth_mask = g.live_mirror = g.show_fps = False
     g.source_path, g.live_async_swap = "A", async_enabled
-    with patch.object(live, "imread_unicode", lambda *_a, **_k: _frame()), \
-         patch.object(live, "get_one_face", load_source), \
-         patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]), \
-         patch.object(live, "detect_one_face_fast", lambda *_: object()):
+    with (
+        patch.object(live, "imread_unicode", lambda *_a, **_k: _frame()),
+        patch.object(live, "get_one_face", load_source),
+        patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]),
+        patch.object(live, "detect_one_face_fast", lambda *_: object()),
+    ):
         pipeline = live.FramePipeline(10.0)
         pipeline.process(_frame())
         assert sources[-1] is loaded[0]
@@ -116,7 +133,10 @@ def test_switching_back_to_a_working_source_reloads_it(clean_globals, no_faces):
 
     g.map_faces = g.live_mirror = g.show_fps = False
     g.source_path = "A"
-    with patch.object(live, "imread_unicode", fake_imread), patch.object(live, "get_one_face", lambda *_: object()):
+    with (
+        patch.object(live, "imread_unicode", fake_imread),
+        patch.object(live, "get_one_face", lambda *_: object()),
+    ):
         pipeline = live.FramePipeline(30.0)
         pipeline.process(_frame())
         g.source_path = "B"
@@ -135,12 +155,14 @@ def test_several_source_photos_are_averaged(clean_globals, no_faces):
         return f
 
     faces = {"a.jpg": face_with([1, 0]), "b.jpg": face_with([0, 1])}
-    with patch.object(live, "imread_unicode", lambda p, *_a, **_k: p), \
-         patch.object(live, "get_one_face", lambda img: faces[img]):
+    with (
+        patch.object(live, "imread_unicode", lambda p, *_a, **_k: p),
+        patch.object(live, "get_one_face", lambda img: faces[img]),
+    ):
         pipeline = live.FramePipeline(30.0)
         avg = pipeline._load_source(("a.jpg", "b.jpg"))
         single = pipeline._load_source(("a.jpg",))
-    assert np.allclose(avg.normed_embedding, [2 ** -0.5, 2 ** -0.5])
+    assert np.allclose(avg.normed_embedding, [2**-0.5, 2**-0.5])
     assert single is faces["a.jpg"]
 
 
@@ -176,12 +198,14 @@ def test_pipeline_drives_the_async_swapper(clean_globals):
     detections = iter([face, None, face] + [None] * 4 + [face])
     g.map_faces = g.many_faces = g.mouth_mask = g.live_mirror = g.show_fps = False
     g.source_path, g.live_async_swap = "A", True
-    with patch.object(live, "imread_unicode", lambda *_a, **_k: _frame()), \
-         patch.object(live, "get_one_face", lambda *_: object()), \
-         patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]), \
-         patch.object(live, "detect_one_face_fast", lambda *_: next(detections)), \
-         patch.object(live, "update_status", lambda *_: None), \
-         patch.object(live, "ASYNC_SWAP_FACE_LOSS_GRACE_S", 0.2):
+    with (
+        patch.object(live, "imread_unicode", lambda *_a, **_k: _frame()),
+        patch.object(live, "get_one_face", lambda *_: object()),
+        patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]),
+        patch.object(live, "detect_one_face_fast", lambda *_: next(detections)),
+        patch.object(live, "update_status", lambda *_: None),
+        patch.object(live, "ASYNC_SWAP_FACE_LOSS_GRACE_S", 0.2),
+    ):
         pipeline = live.FramePipeline(10.0)
         for _ in range(3):
             pipeline.process(_frame())
@@ -216,9 +240,11 @@ def test_stabilization_and_detection_interval_reach_the_pipeline(clean_globals):
     seen = []
     g.map_faces = g.live_mirror = g.show_fps = False
     g.source_path = None
-    with patch.object(live, "get_frame_processors_modules", lambda *_: []), \
-         patch.object(live, "detect_one_face_fast", lambda *_: seen.append(1)), \
-         patch.object(live, "update_status", lambda *_: None):
+    with (
+        patch.object(live, "get_frame_processors_modules", lambda *_: []),
+        patch.object(live, "detect_one_face_fast", lambda *_: seen.append(1)),
+        patch.object(live, "update_status", lambda *_: None),
+    ):
         pipeline = live.FramePipeline(30.0)  # detects every 2nd frame by default
         for _ in range(6):
             pipeline.process(_frame())
@@ -262,7 +288,11 @@ def test_stop_joins_threads_and_releases_everything(clean_globals, no_faces):
         def close(self):
             closed.append(True)
 
-    session = live.LiveSession(0, sinks=[Sink()], capture_factory=lambda i: caps.append(_StubCapture(i)) or caps[-1])
+    session = live.LiveSession(
+        0,
+        sinks=[Sink()],
+        capture_factory=lambda i: caps.append(_StubCapture(i)) or caps[-1],
+    )
     session.start()
     deadline = time.time() + 5
     while not received and time.time() < deadline:
@@ -273,7 +303,9 @@ def test_stop_joins_threads_and_releases_everything(clean_globals, no_faces):
     assert caps[0].released and closed == [True]
 
 
-def test_thread_hint_runs_on_each_worker_thread_and_cannot_break_it(clean_globals, no_faces):
+def test_thread_hint_runs_on_each_worker_thread_and_cannot_break_it(
+    clean_globals, no_faces
+):
     g.source_path, g.map_faces = None, False
     seen, received = {}, []
 
@@ -284,14 +316,20 @@ def test_thread_hint_runs_on_each_worker_thread_and_cannot_break_it(clean_global
         seen[role] = threading.current_thread().name
         raise OSError("hint failed")  # must be swallowed
 
-    session = live.LiveSession(0, sinks=[received.append], capture_factory=Fast, thread_hint=hint)
+    session = live.LiveSession(
+        0, sinks=[received.append], capture_factory=Fast, thread_hint=hint
+    )
     session.start()
     deadline = time.time() + 5
     while not received and time.time() < deadline:
         time.sleep(0.02)
     session.stop()
     assert received and session.error is None
-    assert seen == {"capture": "dlc-capture", "detect": "dlc-detect", "process": "dlc-process"}
+    assert seen == {
+        "capture": "dlc-capture",
+        "detect": "dlc-detect",
+        "process": "dlc-process",
+    }
 
 
 def test_failed_camera_start_raises_and_releases(clean_globals, no_faces):
@@ -301,7 +339,9 @@ def test_failed_camera_start_raises_and_releases(clean_globals, no_faces):
         def start(self, *_a):
             return False
 
-    session = live.LiveSession(3, capture_factory=lambda i: caps.append(Dead(i)) or caps[-1])
+    session = live.LiveSession(
+        3, capture_factory=lambda i: caps.append(Dead(i)) or caps[-1]
+    )
     with pytest.raises(RuntimeError):
         session.start()
     session.stop()
@@ -328,7 +368,9 @@ def test_failing_sink_is_dropped_without_stopping_the_session(clean_globals, no_
     assert len(good) >= 3 and session.sinks == [good.append]
 
 
-def test_session_detects_and_renders_on_separate_threads_in_order(clean_globals, no_faces):
+def test_session_detects_and_renders_on_separate_threads_in_order(
+    clean_globals, no_faces
+):
     g.source_path, g.map_faces, g.live_detect_every_frame = None, False, True
     detect_threads, render_threads, out = set(), set(), []
 
@@ -353,15 +395,22 @@ def test_session_detects_and_renders_on_separate_threads_in_order(clean_globals,
         time.sleep(0.02)
         return real_render(self, det)
 
-    with patch.object(live, "detect_one_face_fast", detect), patch.object(live.FramePipeline, "render", render):
-        session = live.LiveSession(0, sinks=[lambda f: out.append(int(f[0, 0, 0]))], capture_factory=Counting)
+    with (
+        patch.object(live, "detect_one_face_fast", detect),
+        patch.object(live.FramePipeline, "render", render),
+    ):
+        session = live.LiveSession(
+            0, sinks=[lambda f: out.append(int(f[0, 0, 0]))], capture_factory=Counting
+        )
         session.start()
         deadline = time.time() + 5
         while len(out) < 10 and time.time() < deadline:
             time.sleep(0.02)
         session.stop()
     assert detect_threads == {"dlc-detect"} and render_threads == {"dlc-process"}
-    assert len(out) >= 10 and all(a < b for a, b in zip(out, out[1:]))  # newest frames, never reordered
+    assert len(out) >= 10 and all(
+        a < b for a, b in zip(out, out[1:])
+    )  # newest frames, never reordered
 
 
 def test_detection_failure_stops_the_session_with_an_error(clean_globals, no_faces):
@@ -388,11 +437,29 @@ def test_detection_failure_stops_the_session_with_an_error(clean_globals, no_fac
 
 @pytest.fixture
 def saved_config_globals():
-    keys = ("fp_ui", "frame_processors", "execution_providers", "execution_threads", "det_size", "source_path",
-            "source_paths", "mouth_mask", "mouth_mask_size", "many_faces", "live_mirror", "live_async_swap",
-            "show_fps", "color_correction", "swap_model", "live_stabilization", "live_detect_every_frame")
+    keys = (
+        "fp_ui",
+        "frame_processors",
+        "execution_providers",
+        "execution_threads",
+        "det_size",
+        "source_path",
+        "source_paths",
+        "mouth_mask",
+        "mouth_mask_size",
+        "many_faces",
+        "live_mirror",
+        "live_async_swap",
+        "show_fps",
+        "color_correction",
+        "swap_model",
+        "live_stabilization",
+        "live_detect_every_frame",
+    )
     saved = {k: getattr(g, k) for k in keys}
-    saved["fp_ui"], saved["frame_processors"] = dict(saved["fp_ui"]), list(saved["frame_processors"])
+    saved["fp_ui"], saved["frame_processors"] = dict(saved["fp_ui"]), list(
+        saved["frame_processors"]
+    )
     yield
     for k, v in saved.items():
         setattr(g, k, v)
@@ -400,15 +467,33 @@ def saved_config_globals():
 
 def test_configure_maps_config_onto_globals(saved_config_globals):
     with patch.object(live, "reset_face_analyser", lambda: None):
-        live.configure(live.LiveConfig(
-            source_path="face.jpg", source_paths=["b.jpg", "face.jpg"], enhancer="gpen512",
-            execution_providers=["cpu"], swap_model="hyperswap_1b_256", det_size=320, mouth_mask=30,
-            many_faces=True, mirror=True, async_swap=True, stabilization=0.5, detect_every_frame=True,
-        ))
-    assert g.source_path == "face.jpg" and g.source_paths == ("face.jpg", "b.jpg")  # de-duplicated
+        live.configure(
+            live.LiveConfig(
+                source_path="face.jpg",
+                source_paths=["b.jpg", "face.jpg"],
+                enhancer="gpen512",
+                execution_providers=["cpu"],
+                swap_model="hyperswap_1b_256",
+                det_size=320,
+                mouth_mask=30,
+                many_faces=True,
+                mirror=True,
+                async_swap=True,
+                stabilization=0.5,
+                detect_every_frame=True,
+            )
+        )
+    assert g.source_path == "face.jpg" and g.source_paths == (
+        "face.jpg",
+        "b.jpg",
+    )  # de-duplicated
     assert g.swap_model == "hyperswap_1b_256" and g.det_size == 320
     assert g.execution_providers == ["CPUExecutionProvider"]
-    assert g.fp_ui == {"face_enhancer": False, "face_enhancer_gpen256": False, "face_enhancer_gpen512": True}
+    assert g.fp_ui == {
+        "face_enhancer": False,
+        "face_enhancer_gpen256": False,
+        "face_enhancer_gpen512": True,
+    }
     assert g.mouth_mask and g.mouth_mask_size == 30.0
     assert g.many_faces and g.live_mirror and g.live_async_swap
     assert g.live_stabilization == 0.5 and g.live_detect_every_frame
@@ -416,14 +501,19 @@ def test_configure_maps_config_onto_globals(saved_config_globals):
 
 def test_default_swap_model_and_validation(saved_config_globals):
     assert live.LiveConfig().swap_model == "hyperswap_1c_256"
-    for bad in (dict(swap_model="simswap_512"), dict(enhancer="codeformer"), dict(det_size=300),
-                dict(stabilization=2.0)):
+    for bad in (
+        dict(swap_model="simswap_512"),
+        dict(enhancer="codeformer"),
+        dict(det_size=300),
+        dict(stabilization=2.0),
+    ):
         with pytest.raises(ValueError):
             live.configure(live.LiveConfig(execution_providers=["cpu"], **bad))
 
 
 def test_swap_model_list_matches_the_swapper():
     from _vendor.modules.processors.frame import face_swapper
+
     assert live.SWAP_MODELS == face_swapper.SWAP_MODELS
 
 
@@ -432,7 +522,9 @@ def test_swap_model_list_matches_the_swapper():
 
 def test_delayed_sink_delays_skips_ahead_and_passes_through():
     now, got = [0.0], []
-    sink = live.DelayedSink(lambda f: got.append((round(now[0] * 1000), f)), 260, clock=lambda: now[0])
+    sink = live.DelayedSink(
+        lambda f: got.append((round(now[0] * 1000), f)), 260, clock=lambda: now[0]
+    )
     for i in range(20):
         now[0] = i * 0.033
         sink(i)
@@ -459,8 +551,10 @@ def test_virtual_camera_failure_disables_instead_of_raising():
         def Camera(**_kw):
             raise RuntimeError("no virtual camera installed")
 
-    with patch.dict(sys.modules, {"pyvirtualcam": Broken}), \
-         patch("_vendor.modules.virtual_camera.update_status", lambda *_a: None):
+    with (
+        patch.dict(sys.modules, {"pyvirtualcam": Broken}),
+        patch("_vendor.modules.virtual_camera.update_status", lambda *_a: None),
+    ):
         sink = VirtualCameraSink()
         sink(_frame())
         sink(_frame())
@@ -484,10 +578,13 @@ def test_virtual_camera_reopens_when_frame_size_changes():
     class Mod:
         class PixelFormat:
             BGR = "bgr"
+
         Camera = Cam
 
-    with patch.dict(sys.modules, {"pyvirtualcam": Mod}), \
-         patch("_vendor.modules.virtual_camera.update_status", lambda *_a: None):
+    with (
+        patch.dict(sys.modules, {"pyvirtualcam": Mod}),
+        patch("_vendor.modules.virtual_camera.update_status", lambda *_a: None),
+    ):
         sink = VirtualCameraSink()
         sink(np.zeros((480, 640, 3), np.uint8))
         sink(np.zeros((480, 640, 3), np.uint8))
@@ -496,10 +593,22 @@ def test_virtual_camera_reopens_when_frame_size_changes():
 
 
 def test_virtual_cameras_sort_last_on_macos():
-    fake = [type("C", (), {"index": i, "name": n})() for i, n in
-            [(0, "OBS Virtual Camera"), (1, "FaceTime HD Camera"), (2, "iPhone Camera")]]
+    fake = [
+        type("C", (), {"index": i, "name": n})()
+        for i, n in [
+            (0, "OBS Virtual Camera"),
+            (1, "FaceTime HD Camera"),
+            (2, "iPhone Camera"),
+        ]
+    ]
     mod = type("M", (), {"enumerate_cameras": staticmethod(lambda *_: fake)})
-    with patch.object(cameras.platform, "system", lambda: "Darwin"), \
-         patch.dict(sys.modules, {"cv2_enumerate_cameras": mod}):
+    with (
+        patch.object(cameras.platform, "system", lambda: "Darwin"),
+        patch.dict(sys.modules, {"cv2_enumerate_cameras": mod}),
+    ):
         result = cameras.list_cameras()
-    assert [n for _, n in result] == ["FaceTime HD Camera", "iPhone Camera", "OBS Virtual Camera"]
+    assert [n for _, n in result] == [
+        "FaceTime HD Camera",
+        "iPhone Camera",
+        "OBS Virtual Camera",
+    ]

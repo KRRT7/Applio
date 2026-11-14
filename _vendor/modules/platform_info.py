@@ -7,6 +7,7 @@ can branch on without re-querying `platform`, `torch.cuda`, or
 The banner printed by :func:`print_banner` is the single user-facing
 report of which code path the app will take.
 """
+
 from __future__ import annotations
 
 import platform as _platform
@@ -22,6 +23,7 @@ IS_APPLE_SILICON: bool = IS_MACOS and _platform.machine() == "arm64"
 def _detect_torch_cuda() -> bool:
     try:
         import torch  # noqa: WPS433 — local import, avoid hard dep at module load
+
         return bool(torch.cuda.is_available())
     except Exception:
         return False
@@ -30,6 +32,7 @@ def _detect_torch_cuda() -> bool:
 def _detect_onnx_providers() -> List[str]:
     try:
         import onnxruntime
+
         return list(onnxruntime.get_available_providers())
     except Exception:
         return []
@@ -58,6 +61,7 @@ def camera_backends() -> List[Tuple[int, int]]:
     macOS/Linux use the default backend (AVFoundation / V4L2).
     """
     import cv2
+
     if IS_WINDOWS:
         return [
             (0, cv2.CAP_MSMF),

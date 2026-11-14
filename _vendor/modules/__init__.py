@@ -29,7 +29,9 @@ def imwrite_unicode(path, img, params=None):
         root, ext = os.path.splitext(path)
         if not ext:
             ext = ".png"
-        result, encoded_img = cv2.imencode(ext, img, params if params is not None else [])
+        result, encoded_img = cv2.imencode(
+            ext, img, params if params is not None else []
+        )
         if not result:
             return False
         encoded_img.tofile(path)

@@ -20,7 +20,10 @@ add_status_listener(fn(message, scope)).
 """
 
 from _vendor.modules.cameras import is_virtual_camera, list_cameras
-from _vendor.modules.execution import suggest_default_execution_provider, suggest_execution_providers
+from _vendor.modules.execution import (
+    suggest_default_execution_provider,
+    suggest_execution_providers,
+)
 from _vendor.modules.live import (
     ENHANCERS,
     SWAP_MODELS,

@@ -143,7 +143,9 @@ def path_choices(paths):
         if counts[name] > 1:
             # A shipped model can share its name with one of the user's own.
             suffix = (
-                "bundled" if is_bundled(path) else os.path.basename(os.path.dirname(path))
+                "bundled"
+                if is_bundled(path)
+                else os.path.basename(os.path.dirname(path))
             )
             name = f"{name} ({suffix})"
         choices.append((name, path))
@@ -372,15 +374,21 @@ def voice_status():
         return i18n("voice on (waiting for audio)")
     # latency_ms is per-block processing time, not end-to-end delay (that is
     # dominated by the chunk size).
-    budget = f"{st['latency_ms']:.0f}/{st['block_ms']:.0f} ms per block" if st["block_ms"] else f"{st['latency_ms']:.0f} ms/block"
-    return " · ".join([
-        "voice on",
-        f"mic {_level(st['input_db'])}",
-        f"out {_level(st['output_db'])}",
-        budget,
-        f"overruns {st['overruns']}",
-        f"dropouts {st['output_underflows']}",
-    ])
+    budget = (
+        f"{st['latency_ms']:.0f}/{st['block_ms']:.0f} ms per block"
+        if st["block_ms"]
+        else f"{st['latency_ms']:.0f} ms/block"
+    )
+    return " · ".join(
+        [
+            "voice on",
+            f"mic {_level(st['input_db'])}",
+            f"out {_level(st['output_db'])}",
+            budget,
+            f"overruns {st['overruns']}",
+            f"dropouts {st['output_underflows']}",
+        ]
+    )
 
 
 callbacks_kwargs = {}
@@ -1075,7 +1083,12 @@ def realtime_tab(embedded=False):
     # Load saved settings
 
     with gr.Blocks() as ui:
-        with step_card(1, "Audio Devices", i18n, description="Choose input, output and optional monitor devices for live voice."):
+        with step_card(
+            1,
+            "Audio Devices",
+            i18n,
+            description="Choose input, output and optional monitor devices for live voice.",
+        ):
             with gr.Row():
                 refresh_devices_button = gr.Button(i18n("Refresh Audio Devices"))
             with gr.Row():
@@ -1215,9 +1228,7 @@ def realtime_tab(embedded=False):
                         info=i18n(
                             "The path where the output audio will be saved, by default in assets/audios/output.wav"
                         ),
-                        value=os.path.join(
-                            now_dir, "assets", "audios", "output.wav"
-                        ),
+                        value=os.path.join(now_dir, "assets", "audios", "output.wav"),
                         interactive=True,
                     )
                 export_format = gr.Dropdown(
@@ -1250,7 +1261,12 @@ def realtime_tab(embedded=False):
                     value=saved_settings.get("vad_enabled", True),
                     interactive=True,
                 )
-        with step_card(2, "Voice Model", i18n, description="Select the voice model and index used for realtime conversion."):
+        with step_card(
+            2,
+            "Voice Model",
+            i18n,
+            description="Select the voice model and index used for realtime conversion.",
+        ):
             with gr.Row():
                 model_choices = (
                     sorted(names, key=extract_model_and_epoch) if names else []
@@ -1279,7 +1295,12 @@ def realtime_tab(embedded=False):
             with gr.Row():
                 unload_button = gr.Button(i18n("Unload Voice"))
                 refresh_button = gr.Button(i18n("Refresh models and indexes"))
-        with step_card(3, "Conversion Parameters", i18n, description="Tune pitch, voice matching and pitch algorithms."):
+        with step_card(
+            3,
+            "Conversion Parameters",
+            i18n,
+            description="Tune pitch, voice matching and pitch algorithms.",
+        ):
             pitch = gr.Slider(
                 minimum=-24,
                 maximum=24,
@@ -1337,7 +1358,8 @@ def realtime_tab(embedded=False):
                         choices=["rmvpe", "fcpe", "crepe", "swift"],
                         value=(
                             saved_settings["f0_method"]
-                            if saved_settings["f0_method"] in ("rmvpe", "fcpe", "crepe", "swift")
+                            if saved_settings["f0_method"]
+                            in ("rmvpe", "fcpe", "crepe", "swift")
                             else "fcpe"
                         ),
                         label=i18n("Pitch extraction algorithm"),
@@ -1462,7 +1484,12 @@ def realtime_tab(embedded=False):
                         value=1.0,
                         interactive=True,
                     )
-        with step_card(4, "Performance Settings", i18n, description="Balance latency, CPU usage and silence detection."):
+        with step_card(
+            4,
+            "Performance Settings",
+            i18n,
+            description="Balance latency, CPU usage and silence detection.",
+        ):
             with gr.Accordion(i18n("Advanced Settings"), open=False):
                 with gr.Accordion(i18n("Buffer & Latency"), open=True):
                     chunk_size = gr.Slider(
@@ -1529,7 +1556,9 @@ def realtime_tab(embedded=False):
                 interactive=True,
             )
             with gr.Row():
-                start_button = gr.Button(i18n("Start"), variant="primary", visible=not hide_controls)
+                start_button = gr.Button(
+                    i18n("Start"), variant="primary", visible=not hide_controls
+                )
                 stop_button = gr.Button(i18n("Stop"), interactive=False, visible=False)
             latency_info = gr.Label(
                 label=i18n("Status"),
@@ -1688,7 +1717,6 @@ def realtime_tab(embedded=False):
         def update_visibility(checkbox, count):
             return [gr.update(visible=checkbox) for _ in range(count)]
 
-
         def formant_visible(checkbox):
             return update_visibility(checkbox, 2)
 
@@ -1697,7 +1725,6 @@ def realtime_tab(embedded=False):
             inputs=[formant_shifting],
             outputs=[formant_qfrency, formant_timbre],
         )
-
 
         if client_mode:
 
@@ -1826,42 +1853,42 @@ def realtime_tab(embedded=False):
             )
         else:
             start_inputs = [
-                    terms_checkbox,
-                    input_audio_device,
-                    input_audio_gain,
-                    input_asio_channels,
-                    output_audio_device,
-                    output_audio_gain,
-                    output_asio_channels,
-                    asio_output_stereo,
-                    monitor_output_device,
-                    monitor_audio_gain,
-                    monitor_asio_channels,
-                    use_monitor_device,
-                    exclusive_mode,
-                    vad_enabled,
-                    chunk_size,
-                    cross_fade_overlap_size,
-                    extra_convert_size,
-                    silent_threshold,
-                    pitch,
-                    index_rate,
-                    volume_envelope,
-                    protect,
-                    f0_method,
-                    model_file,
-                    index_file,
-                    sid,
-                    autotune,
-                    autotune_strength,
-                    proposed_pitch,
-                    proposed_pitch_threshold,
-                    embedder_model,
-                    embedder_model_custom,
-                    formant_shifting,
-                    formant_qfrency,
-                    formant_timbre,
-                ]
+                terms_checkbox,
+                input_audio_device,
+                input_audio_gain,
+                input_asio_channels,
+                output_audio_device,
+                output_audio_gain,
+                output_asio_channels,
+                asio_output_stereo,
+                monitor_output_device,
+                monitor_audio_gain,
+                monitor_asio_channels,
+                use_monitor_device,
+                exclusive_mode,
+                vad_enabled,
+                chunk_size,
+                cross_fade_overlap_size,
+                extra_convert_size,
+                silent_threshold,
+                pitch,
+                index_rate,
+                volume_envelope,
+                protect,
+                f0_method,
+                model_file,
+                index_file,
+                sid,
+                autotune,
+                autotune_strength,
+                proposed_pitch,
+                proposed_pitch_threshold,
+                embedder_model,
+                embedder_model_custom,
+                formant_shifting,
+                formant_qfrency,
+                formant_timbre,
+            ]
             start_button.click(
                 fn=_realtime_with_toast,
                 inputs=start_inputs,
@@ -1879,8 +1906,12 @@ def realtime_tab(embedded=False):
                 timing_inputs=[chunk_size, cross_fade_overlap_size],
                 # The per-person voice settings a Live profile saves/loads.
                 profile_inputs={
-                    "model_file": model_file, "index_file": index_file, "pitch": pitch,
-                    "index_rate": index_rate, "protect": protect, "f0_method": f0_method,
+                    "model_file": model_file,
+                    "index_file": index_file,
+                    "pitch": pitch,
+                    "index_rate": index_rate,
+                    "protect": protect,
+                    "f0_method": f0_method,
                 },
                 list_models=lambda: sorted(get_files("model")),
                 list_indexes=lambda: sorted(get_files("index")),
@@ -2359,4 +2390,3 @@ def realtime_tab(embedded=False):
             inputs=[formant_timbre],
             outputs=[],
         )
-

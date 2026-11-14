@@ -29,7 +29,9 @@ i18n = I18nAuto()
 CONFIG_PATH = os.path.join(now_dir, "assets", "config.json")
 # Keep Deep-Live-Cam's models with Applio's other models (git-ignored), not
 # inside _vendor/. Must be set before the vendored package is imported.
-os.environ.setdefault("DLC_MODELS_DIR", os.path.join(now_dir, "rvc", "models", "faceswap"))
+os.environ.setdefault(
+    "DLC_MODELS_DIR", os.path.join(now_dir, "rvc", "models", "faceswap")
+)
 
 SWAP_MODELS = [
     ("HyperSwap 1c (recommended)", "hyperswap_1c_256"),
@@ -165,9 +167,22 @@ def _source_paths(gallery):
     return paths
 
 
-def _live_config(sources, swap_model, pixel_boost, enhancer, det_size, mouth_mask, sharpness,
-                 stabilization, detect_every_frame, color_correction, many_faces,
-                 mirror, async_swap, show_fps):
+def _live_config(
+    sources,
+    swap_model,
+    pixel_boost,
+    enhancer,
+    det_size,
+    mouth_mask,
+    sharpness,
+    stabilization,
+    detect_every_frame,
+    color_correction,
+    many_faces,
+    mirror,
+    async_swap,
+    show_fps,
+):
     dlc = _dlc()
     paths = _source_paths(sources)
     return dlc.LiveConfig(
@@ -204,12 +219,18 @@ def estimate_voice_delay(chunk_size_ms, cross_fade_s):
     video already trails the camera by _VIDEO_OWN_LATENCY_MS. An estimate:
     fine-tune by clapping on camera and watching a recording.
     """
-    voice = float(chunk_size_ms or 0) + float(cross_fade_s or 0) * 1000 + _VOICE_OVERHEAD_MS
+    voice = (
+        float(chunk_size_ms or 0) + float(cross_fade_s or 0) * 1000 + _VOICE_OVERHEAD_MS
+    )
     return int(round(max(0.0, voice - _VIDEO_OWN_LATENCY_MS) / 10) * 10)
 
 
 # Live threads -> MMCSS task (Windows only; no-op elsewhere).
-_THREAD_TASKS = {"capture": win_rt.CAPTURE, "detect": win_rt.GAMES, "process": win_rt.GAMES}
+_THREAD_TASKS = {
+    "capture": win_rt.CAPTURE,
+    "detect": win_rt.GAMES,
+    "process": win_rt.GAMES,
+}
 _PRIORITY = None  # priority class to restore when the session stops
 
 
@@ -227,9 +248,21 @@ def _stop_session():
     win_rt.restore_process(priority)
 
 
-_QUALITY_NAMES = ["swap model", "pixel boost", "enhancer", "detection size", "mouth mask", "sharpness",
-                  "stabilization", "detect every frame", "color correction", "all faces",
-                  "mirror", "async swap", "show fps"]
+_QUALITY_NAMES = [
+    "swap model",
+    "pixel boost",
+    "enhancer",
+    "detection size",
+    "mouth mask",
+    "sharpness",
+    "stabilization",
+    "detect every frame",
+    "color correction",
+    "all faces",
+    "mirror",
+    "async swap",
+    "show fps",
+]
 
 
 def _keep_polling():
@@ -251,8 +284,10 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
     global _SESSION, _VCAM, _PRIORITY
     paths = _source_paths(source)
     settings = ", ".join(f"{n} {v}" for n, v in zip(_QUALITY_NAMES, quality))
-    _log(f"Face: starting | {len(paths)} source photo(s) | camera {camera} | {resolution} | "
-         f"virtual camera {'on' if virtual_camera else 'off'} | video delay {float(video_delay or 0):.0f} ms")
+    _log(
+        f"Face: starting | {len(paths)} source photo(s) | camera {camera} | {resolution} | "
+        f"virtual camera {'on' if virtual_camera else 'off'} | video delay {float(video_delay or 0):.0f} ms"
+    )
     _log(f"Face: settings | {settings}")
     if not paths:
         yield _face_fail(i18n("Add at least one source face photo first."))
@@ -265,23 +300,35 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
         dlc = _dlc()
         config = _live_config(source, *quality)
         dlc.configure(config)
-        _log(f"Face: using {config.execution_providers[0]} | sources: " + ", ".join(os.path.basename(p) for p in paths))
+        _log(
+            f"Face: using {config.execution_providers[0]} | sources: "
+            + ", ".join(os.path.basename(p) for p in paths)
+        )
         _log("Face: checking models (first run downloads them)...")
         yield _status_text(), gr.Timer(active=False)
         if not dlc.ensure_models():
-            yield _face_fail(i18n("Could not download the face swap models. Check your connection."))
+            yield _face_fail(
+                i18n("Could not download the face swap models. Check your connection.")
+            )
             return
 
         index = int(str(camera).split(":", 1)[0])
         width, height = (int(v) for v in resolution.split("x"))
-        vcam = dlc.DelayedSink(dlc.VirtualCameraSink(), float(video_delay or 0)) if virtual_camera else None
-        session = dlc.LiveSession(index, width, height, sinks=[vcam] if vcam else [],
-                                  thread_hint=_thread_hint)
+        vcam = (
+            dlc.DelayedSink(dlc.VirtualCameraSink(), float(video_delay or 0))
+            if virtual_camera
+            else None
+        )
+        session = dlc.LiveSession(
+            index, width, height, sinks=[vcam] if vcam else [], thread_hint=_thread_hint
+        )
         _log("Face: loading models (the first start compiles them, ~10-20 s)...")
         yield _status_text(), gr.Timer(active=False)
         t0 = time.monotonic()
         dlc.preload_models()
-        _log(f"Face: models loaded in {time.monotonic() - t0:.1f} s; starting camera {index}...")
+        _log(
+            f"Face: models loaded in {time.monotonic() - t0:.1f} s; starting camera {index}..."
+        )
         yield _status_text(), gr.Timer(active=False)
         try:
             session.start()
@@ -300,16 +347,56 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
         yield _face_fail(f"{type(exc).__name__}: {exc}")
         return
 
-    save_settings({**load_settings(), **dict(zip(
-        ["source_paths", "camera", "resolution", "virtual_camera", "video_delay", "swap_model", "pixel_boost", "enhancer",
-         "det_size", "mouth_mask", "sharpness", "stabilization", "detect_every_frame",
-         "color_correction", "many_faces", "mirror", "async_swap", "show_fps"],
-        [paths, camera, resolution, bool(virtual_camera), float(video_delay or 0), *quality],
-    ))})
+    save_settings(
+        {
+            **load_settings(),
+            **dict(
+                zip(
+                    [
+                        "source_paths",
+                        "camera",
+                        "resolution",
+                        "virtual_camera",
+                        "video_delay",
+                        "swap_model",
+                        "pixel_boost",
+                        "enhancer",
+                        "det_size",
+                        "mouth_mask",
+                        "sharpness",
+                        "stabilization",
+                        "detect_every_frame",
+                        "color_correction",
+                        "many_faces",
+                        "mirror",
+                        "async_swap",
+                        "show_fps",
+                    ],
+                    [
+                        paths,
+                        camera,
+                        resolution,
+                        bool(virtual_camera),
+                        float(video_delay or 0),
+                        *quality,
+                    ],
+                )
+            ),
+        }
+    )
     yield _status_text(), gr.Timer(active=True)
 
 
-def start_live_with_voice(chunk_size_ms, cross_fade_s, source, camera, resolution, virtual_camera, video_delay, *quality):
+def start_live_with_voice(
+    chunk_size_ms,
+    cross_fade_s,
+    source,
+    camera,
+    resolution,
+    virtual_camera,
+    video_delay,
+    *quality,
+):
     """start_live for "Start face + voice": a 0 video delay is set to the
     estimate that matches the voice, and the slider is updated to show it."""
     global _POLL_UNTIL
@@ -317,10 +404,14 @@ def start_live_with_voice(chunk_size_ms, cross_fade_s, source, camera, resolutio
     _log("Start face + voice pressed")
     delay = float(video_delay or 0) or estimate_voice_delay(chunk_size_ms, cross_fade_s)
     if not float(video_delay or 0):
-        _log(f"Face + voice: video delay auto-set to {delay:.0f} ms "
-             f"(voice chunk {float(chunk_size_ms or 0):.0f} ms + crossfade {float(cross_fade_s or 0) * 1000:.0f} ms)")
+        _log(
+            f"Face + voice: video delay auto-set to {delay:.0f} ms "
+            f"(voice chunk {float(chunk_size_ms or 0):.0f} ms + crossfade {float(cross_fade_s or 0) * 1000:.0f} ms)"
+        )
     first = True
-    for status, timer in start_live(source, camera, resolution, virtual_camera, delay, *quality):
+    for status, timer in start_live(
+        source, camera, resolution, virtual_camera, delay, *quality
+    ):
         yield status, timer, (gr.update(value=delay) if first else gr.skip())
         first = False
 
@@ -359,10 +450,14 @@ def voice_start_logged(*args):
         for update in controls["start_fn"](*args):
             text = update[0] if isinstance(update, tuple) else update
             text = text.get("value", "") if isinstance(text, dict) else str(text)
-            kind = re.sub(r"\s*\(.*?\).*$", "", text).strip()  # drop "(3s)", "(12 blocks) ███"
+            kind = re.sub(
+                r"\s*\(.*?\).*$", "", text
+            ).strip()  # drop "(3s)", "(12 blocks) ███"
             if text.startswith("Latency"):
                 if not said_running:
-                    _log(f"Voice: running after {time.monotonic() - t_start:.0f} s ({text})")
+                    _log(
+                        f"Voice: running after {time.monotonic() - t_start:.0f} s ({text})"
+                    )
                     said_running = True
             elif text and kind != last_kind:
                 _log(f"Voice: {kind or text}")
@@ -408,9 +503,9 @@ def _voice_status():
 
 
 # Thresholds for the voice diagnostics written to the activity log.
-_SILENT_DB = -60.0        # below this the mic (or output) counts as silent
-_SOUND_DB = -50.0         # above this the mic counts as having sound
-_SPEECH_DB = -35.0        # roughly speaking level; VAD rightly mutes quieter room noise
+_SILENT_DB = -60.0  # below this the mic (or output) counts as silent
+_SOUND_DB = -50.0  # above this the mic counts as having sound
+_SPEECH_DB = -35.0  # roughly speaking level; VAD rightly mutes quieter room noise
 _VOICE_WATCH = {}
 
 
@@ -425,16 +520,26 @@ def _watch_voice():
         return
     now = time.monotonic()
     if not w:
-        w.update(silent_since=None, warned_silent=False, had_sound=False, gated_since=None,
-                 warned_gated=False, last_counts={}, last_report=float("-inf"), errors=0)
+        w.update(
+            silent_since=None,
+            warned_silent=False,
+            had_sound=False,
+            gated_since=None,
+            warned_gated=False,
+            last_counts={},
+            last_report=float("-inf"),
+            errors=0,
+        )
     mic, out = st["input_db"], st["output_db"]
 
     if mic < _SILENT_DB:
         if w["silent_since"] is None:
             w["silent_since"] = now
         if not w["warned_silent"] and now - w["silent_since"] >= 5.0:
-            _log(f"Voice WARNING: no sound from the mic for 5 s (level {mic:.0f} dB). Check the Input "
-                 "device and its volume, and that Windows allows microphone access.")
+            _log(
+                f"Voice WARNING: no sound from the mic for 5 s (level {mic:.0f} dB). Check the Input "
+                "device and its volume, and that Windows allows microphone access."
+            )
             w["warned_silent"] = True
     elif mic > _SOUND_DB:
         if not w["had_sound"] or w["warned_silent"]:
@@ -445,29 +550,43 @@ def _watch_voice():
         if w["gated_since"] is None:
             w["gated_since"] = now
         if not w["warned_gated"] and now - w["gated_since"] >= 3.0:
-            _log(f"Voice WARNING: you seem to be speaking ({mic:.0f} dB) but the converted output is "
-                 "silent. Check Enable VAD / Silence Threshold in the Realtime tab.")
+            _log(
+                f"Voice WARNING: you seem to be speaking ({mic:.0f} dB) but the converted output is "
+                "silent. Check Enable VAD / Silence Threshold in the Realtime tab."
+            )
             w["warned_gated"] = True
     else:
         w.update(gated_since=None, warned_gated=False)
 
     counts = {k: st[k] for k in ("overruns", "input_overflows", "output_underflows")}
-    new = {k: v - w["last_counts"].get(k, 0) for k, v in counts.items() if v > w["last_counts"].get(k, 0)}
+    new = {
+        k: v - w["last_counts"].get(k, 0)
+        for k, v in counts.items()
+        if v > w["last_counts"].get(k, 0)
+    }
     if new and now - w["last_report"] >= 5.0:
         parts = []
         if "overruns" in new:
-            parts.append(f"{new['overruns']} block(s) took longer than the block time "
-                         f"({st['latency_ms']:.0f} ms > {st['block_ms']:.0f} ms)")
+            parts.append(
+                f"{new['overruns']} block(s) took longer than the block time "
+                f"({st['latency_ms']:.0f} ms > {st['block_ms']:.0f} ms)"
+            )
         if "output_underflows" in new:
             parts.append(f"{new['output_underflows']} output dropout(s)")
         if "input_overflows" in new:
             parts.append(f"{new['input_overflows']} lost input block(s)")
-        _log("Voice WARNING: " + "; ".join(parts) + ". Audio may stutter: try Async swap or a lighter "
-             "face setting, or a larger Chunk Size.")
+        _log(
+            "Voice WARNING: "
+            + "; ".join(parts)
+            + ". Audio may stutter: try Async swap or a lighter "
+            "face setting, or a larger Chunk Size."
+        )
         w["last_counts"], w["last_report"] = counts, now
 
     if st["callback_errors"] > w["errors"]:
-        _log(f"Voice ERROR in the audio stream ({st['callback_errors']} so far): {st['last_error']}")
+        _log(
+            f"Voice ERROR in the audio stream ({st['callback_errors']} so far): {st['last_error']}"
+        )
         w["errors"] = st["callback_errors"]
 
 
@@ -518,7 +637,11 @@ def poll_preview():
         return gr.skip(), _status_text(), gr.Timer()
     h, w = frame.shape[:2]
     if w > PREVIEW_WIDTH:
-        frame = cv2.resize(frame, (PREVIEW_WIDTH, int(h * PREVIEW_WIDTH / w)), interpolation=cv2.INTER_AREA)
+        frame = cv2.resize(
+            frame,
+            (PREVIEW_WIDTH, int(h * PREVIEW_WIDTH / w)),
+            interpolation=cv2.INTER_AREA,
+        )
     return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), _status_text(), gr.Timer()
 
 
@@ -532,15 +655,25 @@ atexit.register(_stop_session)
 
 
 def _save_toggles(face_enabled, voice_enabled):
-    save_settings({**load_settings(), "face_enabled": bool(face_enabled), "voice_enabled": bool(voice_enabled)})
+    save_settings(
+        {
+            **load_settings(),
+            "face_enabled": bool(face_enabled),
+            "voice_enabled": bool(voice_enabled),
+        }
+    )
 
 
-def start_face_if_enabled(face_enabled, voice_enabled, chunk_size_ms, cross_fade_s, *face_inputs):
+def start_face_if_enabled(
+    face_enabled, voice_enabled, chunk_size_ms, cross_fade_s, *face_inputs
+):
     """Live page Start, face side: (status, timer, video delay) updates."""
     global _POLL_UNTIL
     _POLL_UNTIL = time.monotonic() + 30.0
     _save_toggles(face_enabled, voice_enabled)
-    _log(f"Start pressed | face swap {'on' if face_enabled else 'off'} | voice {'on' if voice_enabled else 'off'}")
+    _log(
+        f"Start pressed | face swap {'on' if face_enabled else 'off'} | voice {'on' if voice_enabled else 'off'}"
+    )
     if not face_enabled:
         if _SESSION is not None:
             _stop_session()
@@ -579,6 +712,7 @@ def stop_voice():
 
 def _profile_dropdown(value=None):
     from tabs.faceswap import profiles
+
     return gr.Dropdown(choices=profiles.list_profiles(), value=value)
 
 
@@ -598,38 +732,56 @@ def _make_profile_handlers(has_voice):
         except (OSError, ValueError) as exc:
             _log(f"Profile ERROR: could not load '{name}': {exc}")
             return (*skips, _status_text())
-        face_updates = [gr.update(value=prof["face"][k]) if k in prof["face"] else gr.skip()
-                        for k in profiles.FACE_KEYS]
+        face_updates = [
+            gr.update(value=prof["face"][k]) if k in prof["face"] else gr.skip()
+            for k in profiles.FACE_KEYS
+        ]
         voice_updates = []
         voice = prof["voice"]
         if has_voice:
             controls = _realtime().SESSION_CONTROLS
-            choices = {"model_file": controls["list_models"](), "index_file": controls["list_indexes"]()}
+            choices = {
+                "model_file": controls["list_models"](),
+                "index_file": controls["list_indexes"](),
+            }
             for k in profiles.VOICE_KEYS:
                 if k not in voice:
                     voice_updates.append(gr.skip())
                 elif k in choices:
-                    voice_updates.append(gr.update(value=profiles.match_choice(voice[k], choices[k])))
+                    voice_updates.append(
+                        gr.update(value=profiles.match_choice(voice[k], choices[k]))
+                    )
                 else:
                     voice_updates.append(gr.update(value=voice[k]))
         save_settings({**load_settings(), "profile": name})
         details = f"{len(prof['faces'])} photo(s)"
         if voice.get("model_file"):
-            details += (f" | voice {os.path.basename(voice['model_file'])}, pitch {voice.get('pitch')}, "
-                        f"index {voice.get('index_rate')}, protect {voice.get('protect')}, {voice.get('f0_method')}")
+            details += (
+                f" | voice {os.path.basename(voice['model_file'])}, pitch {voice.get('pitch')}, "
+                f"index {voice.get('index_rate')}, protect {voice.get('protect')}, {voice.get('f0_method')}"
+            )
         _log(f"Profile '{name}' loaded: {details}")
         rt = _realtime()
         if rt is not None and rt.voice_status() is not None and voice.get("model_file"):
             _log("Profile: a different voice model takes effect on the next Start")
-        return (gr.update(value=prof["faces"] or None), *face_updates, *voice_updates, _status_text())
+        return (
+            gr.update(value=prof["faces"] or None),
+            *face_updates,
+            *voice_updates,
+            _status_text(),
+        )
 
     def save(name, source, *values):
         name = (name or "").strip()
         if not name:
             gr.Warning(i18n("Type a profile name first."))
             return gr.skip(), gr.skip(), _status_text()
-        face = dict(zip(profiles.FACE_KEYS, values[:len(profiles.FACE_KEYS)]))
-        voice = dict(zip(profiles.VOICE_KEYS, values[len(profiles.FACE_KEYS):])) if has_voice else {}
+        face = dict(zip(profiles.FACE_KEYS, values[: len(profiles.FACE_KEYS)]))
+        voice = (
+            dict(zip(profiles.VOICE_KEYS, values[len(profiles.FACE_KEYS) :]))
+            if has_voice
+            else {}
+        )
         existed = name in profiles.list_profiles()
         try:
             prof = profiles.save_profile(name, _source_paths(source), face, voice)
@@ -637,9 +789,19 @@ def _make_profile_handlers(has_voice):
             _log(f"Profile ERROR: could not save '{name}': {exc}")
             return gr.skip(), gr.skip(), _status_text()
         save_settings({**load_settings(), "profile": name})
-        _log(f"Profile '{name}' {'updated' if existed else 'created'}: {len(prof['faces'])} photo(s)"
-             + (f", voice {os.path.basename(voice.get('model_file') or '')}" if voice else ""))
-        return _profile_dropdown(name), gr.update(value=prof["faces"] or None), _status_text()
+        _log(
+            f"Profile '{name}' {'updated' if existed else 'created'}: {len(prof['faces'])} photo(s)"
+            + (
+                f", voice {os.path.basename(voice.get('model_file') or '')}"
+                if voice
+                else ""
+            )
+        )
+        return (
+            _profile_dropdown(name),
+            gr.update(value=prof["faces"] or None),
+            _status_text(),
+        )
 
     def delete(name):
         name = (name or "").strip()
@@ -666,7 +828,11 @@ def live_tab():
     saved = load_settings()
     cameras = camera_choices()
     camera_values = [value for _label, value in cameras]
-    saved_camera = saved["camera"] if saved["camera"] in camera_values else (camera_values[0] if camera_values else None)
+    saved_camera = (
+        saved["camera"]
+        if saved["camera"] in camera_values
+        else (camera_values[0] if camera_values else None)
+    )
     saved_sources = [p for p in saved["source_paths"] if os.path.isfile(p)] or None
 
     with gr.Blocks():
@@ -674,49 +840,157 @@ def live_tab():
             with gr.Column(scale=3, min_width=360):
                 with gr.Tabs():
                     with gr.Tab(i18n("Video")):
-                        with step_card(1, "Source Face", i18n, description="Photos of the face to wear, all of the same person. 3-5 sharp, front-facing shots (eyes open, mouth closed) give a steadier likeness than one."):
-                            source = gr.Gallery(label=i18n("Source face photos"), type="filepath", value=saved_sources,
-                                                interactive=True, columns=4, height=200, object_fit="cover",
-                                                allow_preview=False, preview=False)
-
-                        with step_card(2, "Camera & Output", i18n, description="Pick your camera. Virtual camera output lets Zoom, Meet, WhatsApp, etc. use the result."):
-                            with gr.Row():
-                                camera = gr.Dropdown(label=i18n("Camera"), choices=cameras, value=saved_camera, scale=3)
-                                refresh = gr.Button(i18n("Refresh"), scale=1, size="sm")
-                            resolution = gr.Dropdown(label=i18n("Resolution"), choices=RESOLUTIONS, value=saved["resolution"])
-                            virtual_camera = gr.Checkbox(
-                                label=i18n("Send to virtual camera (OBS Virtual Camera)"), value=saved["virtual_camera"],
-                                info=i18n("On macOS: install OBS and start its virtual camera once; OBS does not need to run."),
+                        with step_card(
+                            1,
+                            "Source Face",
+                            i18n,
+                            description="Photos of the face to wear, all of the same person. 3-5 sharp, front-facing shots (eyes open, mouth closed) give a steadier likeness than one.",
+                        ):
+                            source = gr.Gallery(
+                                label=i18n("Source face photos"),
+                                type="filepath",
+                                value=saved_sources,
+                                interactive=True,
+                                columns=4,
+                                height=200,
+                                object_fit="cover",
+                                allow_preview=False,
+                                preview=False,
                             )
-                            video_delay = gr.Slider(label=i18n("Video delay (ms)"), minimum=0, maximum=1000, step=10, value=saved["video_delay"],
-                                                    info=i18n("Delays the virtual-camera video so lips match converted voice. Fine-tune by clapping on camera."))
-                            match_voice = gr.Button(i18n("Match voice delay"), size="sm")
 
-                        with step_card(3, "Quality", i18n, description="Changes apply immediately while live."):
-                            swap_model = gr.Dropdown(label=i18n("Swap model"), choices=SWAP_MODELS, value=saved["swap_model"])
+                        with step_card(
+                            2,
+                            "Camera & Output",
+                            i18n,
+                            description="Pick your camera. Virtual camera output lets Zoom, Meet, WhatsApp, etc. use the result.",
+                        ):
+                            with gr.Row():
+                                camera = gr.Dropdown(
+                                    label=i18n("Camera"),
+                                    choices=cameras,
+                                    value=saved_camera,
+                                    scale=3,
+                                )
+                                refresh = gr.Button(i18n("Refresh"), scale=1, size="sm")
+                            resolution = gr.Dropdown(
+                                label=i18n("Resolution"),
+                                choices=RESOLUTIONS,
+                                value=saved["resolution"],
+                            )
+                            virtual_camera = gr.Checkbox(
+                                label=i18n(
+                                    "Send to virtual camera (OBS Virtual Camera)"
+                                ),
+                                value=saved["virtual_camera"],
+                                info=i18n(
+                                    "On macOS: install OBS and start its virtual camera once; OBS does not need to run."
+                                ),
+                            )
+                            video_delay = gr.Slider(
+                                label=i18n("Video delay (ms)"),
+                                minimum=0,
+                                maximum=1000,
+                                step=10,
+                                value=saved["video_delay"],
+                                info=i18n(
+                                    "Delays the virtual-camera video so lips match converted voice. Fine-tune by clapping on camera."
+                                ),
+                            )
+                            match_voice = gr.Button(
+                                i18n("Match voice delay"), size="sm"
+                            )
+
+                        with step_card(
+                            3,
+                            "Quality",
+                            i18n,
+                            description="Changes apply immediately while live.",
+                        ):
+                            swap_model = gr.Dropdown(
+                                label=i18n("Swap model"),
+                                choices=SWAP_MODELS,
+                                value=saved["swap_model"],
+                            )
                             pixel_boost = gr.Checkbox(
-                                label=i18n("Pixel boost (512 px)"), value=saved["pixel_boost"],
-                                info=i18n("HyperSwap at 512 px: visibly sharper face, but the swap costs ~4x "
-                                          "(about 12 fps on an RTX 4060, 10 on an M3). Pair with Async swap."))
-                            enhancer = gr.Dropdown(label=i18n("Face enhancer"), choices=ENHANCERS, value=saved["enhancer"])
-                            det_size = gr.Dropdown(label=i18n("Face detection size"), choices=DET_SIZES, value=saved["det_size"],
-                                                   info=i18n("Lower is faster; 320 is plenty at webcam distance."))
-                            mouth_mask = gr.Slider(label=i18n("Mouth mask"), minimum=0, maximum=100, step=1, value=saved["mouth_mask"],
-                                                   info=i18n("Keep your real mouth for natural speech. 0 = off."))
-                            sharpness = gr.Slider(label=i18n("Sharpness"), minimum=0, maximum=1, step=0.05, value=saved["sharpness"],
-                                                  info=i18n("Sharpen the swapped face. Nearly free; try 0.2-0.4."))
-                            stabilization = gr.Slider(label=i18n("Stabilization"), minimum=0, maximum=1, step=0.05, value=saved["stabilization"],
-                                                      info=i18n("Steadies the face between frames (less edge shimmer). Higher = steadier but laggier; 0.5 is a good balance."))
-                            detect_every_frame = gr.Checkbox(label=i18n("Detect every frame"), value=saved["detect_every_frame"],
-                                                             info=i18n("Smoother tracking when you move (~2 ms per frame). Turn off on slower machines."))
+                                label=i18n("Pixel boost (512 px)"),
+                                value=saved["pixel_boost"],
+                                info=i18n(
+                                    "HyperSwap at 512 px: visibly sharper face, but the swap costs ~4x "
+                                    "(about 12 fps on an RTX 4060, 10 on an M3). Pair with Async swap."
+                                ),
+                            )
+                            enhancer = gr.Dropdown(
+                                label=i18n("Face enhancer"),
+                                choices=ENHANCERS,
+                                value=saved["enhancer"],
+                            )
+                            det_size = gr.Dropdown(
+                                label=i18n("Face detection size"),
+                                choices=DET_SIZES,
+                                value=saved["det_size"],
+                                info=i18n(
+                                    "Lower is faster; 320 is plenty at webcam distance."
+                                ),
+                            )
+                            mouth_mask = gr.Slider(
+                                label=i18n("Mouth mask"),
+                                minimum=0,
+                                maximum=100,
+                                step=1,
+                                value=saved["mouth_mask"],
+                                info=i18n(
+                                    "Keep your real mouth for natural speech. 0 = off."
+                                ),
+                            )
+                            sharpness = gr.Slider(
+                                label=i18n("Sharpness"),
+                                minimum=0,
+                                maximum=1,
+                                step=0.05,
+                                value=saved["sharpness"],
+                                info=i18n(
+                                    "Sharpen the swapped face. Nearly free; try 0.2-0.4."
+                                ),
+                            )
+                            stabilization = gr.Slider(
+                                label=i18n("Stabilization"),
+                                minimum=0,
+                                maximum=1,
+                                step=0.05,
+                                value=saved["stabilization"],
+                                info=i18n(
+                                    "Steadies the face between frames (less edge shimmer). Higher = steadier but laggier; 0.5 is a good balance."
+                                ),
+                            )
+                            detect_every_frame = gr.Checkbox(
+                                label=i18n("Detect every frame"),
+                                value=saved["detect_every_frame"],
+                                info=i18n(
+                                    "Smoother tracking when you move (~2 ms per frame). Turn off on slower machines."
+                                ),
+                            )
                             with gr.Row():
-                                color_correction = gr.Checkbox(label=i18n("Color correction"), value=saved["color_correction"])
-                                many_faces = gr.Checkbox(label=i18n("All faces"), value=saved["many_faces"])
+                                color_correction = gr.Checkbox(
+                                    label=i18n("Color correction"),
+                                    value=saved["color_correction"],
+                                )
+                                many_faces = gr.Checkbox(
+                                    label=i18n("All faces"), value=saved["many_faces"]
+                                )
                             with gr.Row():
-                                mirror = gr.Checkbox(label=i18n("Mirror"), value=saved["mirror"])
-                                show_fps = gr.Checkbox(label=i18n("Show FPS"), value=saved["show_fps"])
-                            async_swap = gr.Checkbox(label=i18n("Async swap"), value=saved["async_swap"],
-                                                     info=i18n("Smoother motion on slow hardware; expressions lag slightly."))
+                                mirror = gr.Checkbox(
+                                    label=i18n("Mirror"), value=saved["mirror"]
+                                )
+                                show_fps = gr.Checkbox(
+                                    label=i18n("Show FPS"), value=saved["show_fps"]
+                                )
+                            async_swap = gr.Checkbox(
+                                label=i18n("Async swap"),
+                                value=saved["async_swap"],
+                                info=i18n(
+                                    "Smoother motion on slow hardware; expressions lag slightly."
+                                ),
+                            )
 
                     with gr.Tab(i18n("Voice")):
                         realtime_ui.realtime_tab(embedded=True)
@@ -724,30 +998,82 @@ def live_tab():
             with gr.Column(scale=2, min_width=360):
                 with gr.Row(equal_height=True):
                     known = profiles.list_profiles()
-                    profile = gr.Dropdown(label=i18n("Profile"), choices=known, allow_custom_value=True, scale=3,
-                                          value=saved["profile"] if saved["profile"] in known else None,
-                                          info=i18n("Pick a person to load their photos, voice and look. Type a new name and Save to create one."))
+                    profile = gr.Dropdown(
+                        label=i18n("Profile"),
+                        choices=known,
+                        allow_custom_value=True,
+                        scale=3,
+                        value=saved["profile"] if saved["profile"] in known else None,
+                        info=i18n(
+                            "Pick a person to load their photos, voice and look. Type a new name and Save to create one."
+                        ),
+                    )
                     with gr.Column(scale=1, min_width=120):
                         save_profile_btn = gr.Button(i18n("Save profile"), size="sm")
-                        delete_profile_btn = gr.Button(i18n("Delete"), size="sm", variant="stop")
-                preview = gr.Image(label=i18n("Live preview"), interactive=False, format="jpeg", height=420)
-                rt = _realtime()  # None in client mode: voice then starts from the Voice tab
+                        delete_profile_btn = gr.Button(
+                            i18n("Delete"), size="sm", variant="stop"
+                        )
+                preview = gr.Image(
+                    label=i18n("Live preview"),
+                    interactive=False,
+                    format="jpeg",
+                    height=420,
+                )
+                rt = (
+                    _realtime()
+                )  # None in client mode: voice then starts from the Voice tab
                 with gr.Row():
-                    face_on = gr.Checkbox(label=i18n("Face swap"), value=saved["face_enabled"])
-                    voice_on = gr.Checkbox(label=i18n("Voice"), value=saved["voice_enabled"] and rt is not None,
-                                           interactive=rt is not None)
+                    face_on = gr.Checkbox(
+                        label=i18n("Face swap"), value=saved["face_enabled"]
+                    )
+                    voice_on = gr.Checkbox(
+                        label=i18n("Voice"),
+                        value=saved["voice_enabled"] and rt is not None,
+                        interactive=rt is not None,
+                    )
                 with gr.Row():
                     start = gr.Button(i18n("Start"), variant="primary")
                     stop = gr.Button(i18n("Stop"))
-                gr.Markdown(i18n("Start runs whatever is switched on. Voice uses the settings in the Voice tab."),
-                            elem_classes="applio-card-desc")
-                status = gr.Textbox(label=i18n("Status"), value=i18n("Stopped."), interactive=False,
-                                    lines=12, max_lines=22, autoscroll=True, buttons=["copy"])
+                gr.Markdown(
+                    i18n(
+                        "Start runs whatever is switched on. Voice uses the settings in the Voice tab."
+                    ),
+                    elem_classes="applio-card-desc",
+                )
+                status = gr.Textbox(
+                    label=i18n("Status"),
+                    value=i18n("Stopped."),
+                    interactive=False,
+                    lines=12,
+                    max_lines=22,
+                    autoscroll=True,
+                    buttons=["copy"],
+                )
 
         timer = gr.Timer(0.2, active=False)
-        quality = [swap_model, pixel_boost, enhancer, det_size, mouth_mask, sharpness, stabilization, detect_every_frame,
-                   color_correction, many_faces, mirror, async_swap, show_fps]
-        face_inputs = [source, camera, resolution, virtual_camera, video_delay, *quality]
+        quality = [
+            swap_model,
+            pixel_boost,
+            enhancer,
+            det_size,
+            mouth_mask,
+            sharpness,
+            stabilization,
+            detect_every_frame,
+            color_correction,
+            many_faces,
+            mirror,
+            async_swap,
+            show_fps,
+        ]
+        face_inputs = [
+            source,
+            camera,
+            resolution,
+            virtual_camera,
+            video_delay,
+            *quality,
+        ]
 
         refresh.click(lambda: gr.Dropdown(choices=camera_choices()), outputs=camera)
         video_delay.change(set_video_delay, inputs=video_delay, show_progress="hidden")
@@ -756,28 +1082,68 @@ def live_tab():
             controls = rt.SESSION_CONTROLS
             # One click, two listeners: the face side here and the voice side
             # through the Realtime handler (its own controls are hidden).
-            start.click(start_face_if_enabled, inputs=[face_on, voice_on, *controls["timing_inputs"], *face_inputs],
-                        outputs=[status, timer, video_delay])
-            start.click(start_voice_if_enabled, inputs=[voice_on, *controls["start_inputs"]],
-                        outputs=controls["outputs"])
+            start.click(
+                start_face_if_enabled,
+                inputs=[face_on, voice_on, *controls["timing_inputs"], *face_inputs],
+                outputs=[status, timer, video_delay],
+            )
+            start.click(
+                start_voice_if_enabled,
+                inputs=[voice_on, *controls["start_inputs"]],
+                outputs=controls["outputs"],
+            )
             stop.click(stop_voice, outputs=controls["outputs"])
-            match_voice.click(estimate_voice_delay, inputs=controls["timing_inputs"], outputs=video_delay)
+            match_voice.click(
+                estimate_voice_delay,
+                inputs=controls["timing_inputs"],
+                outputs=video_delay,
+            )
         else:
             zero = gr.Number(value=0, visible=False)
-            start.click(start_face_if_enabled, inputs=[face_on, voice_on, zero, zero, *face_inputs],
-                        outputs=[status, timer, video_delay])
+            start.click(
+                start_face_if_enabled,
+                inputs=[face_on, voice_on, zero, zero, *face_inputs],
+                outputs=[status, timer, video_delay],
+            )
             match_voice.visible = False
         # Profiles: face photos + look settings, plus the Voice tab's voice settings.
-        face_profile = [swap_model, enhancer, mouth_mask, sharpness, color_correction, pixel_boost]
-        voice_profile = ([rt.SESSION_CONTROLS["profile_inputs"][k] for k in profiles.VOICE_KEYS]
-                         if rt is not None else [])
-        load_profile, save_profile, delete_profile = _make_profile_handlers(rt is not None)
-        profile.select(load_profile, inputs=profile, outputs=[source, *face_profile, *voice_profile, status])
-        save_profile_btn.click(save_profile, inputs=[profile, source, *face_profile, *voice_profile],
-                               outputs=[profile, source, status])
-        delete_profile_btn.click(delete_profile, inputs=profile, outputs=[profile, status],
-                                 js="(name) => (name && confirm('Delete profile \"' + name + '\"? Its saved photos are removed.')) ? name : null")
+        face_profile = [
+            swap_model,
+            enhancer,
+            mouth_mask,
+            sharpness,
+            color_correction,
+            pixel_boost,
+        ]
+        voice_profile = (
+            [rt.SESSION_CONTROLS["profile_inputs"][k] for k in profiles.VOICE_KEYS]
+            if rt is not None
+            else []
+        )
+        load_profile, save_profile, delete_profile = _make_profile_handlers(
+            rt is not None
+        )
+        profile.select(
+            load_profile,
+            inputs=profile,
+            outputs=[source, *face_profile, *voice_profile, status],
+        )
+        save_profile_btn.click(
+            save_profile,
+            inputs=[profile, source, *face_profile, *voice_profile],
+            outputs=[profile, source, status],
+        )
+        delete_profile_btn.click(
+            delete_profile,
+            inputs=profile,
+            outputs=[profile, status],
+            js="(name) => (name && confirm('Delete profile \"' + name + '\"? Its saved photos are removed.')) ? name : null",
+        )
 
-        timer.tick(poll_preview, outputs=[preview, status, timer], show_progress="hidden")
+        timer.tick(
+            poll_preview, outputs=[preview, status, timer], show_progress="hidden"
+        )
         for control in [source, *quality]:
-            control.change(apply_live, inputs=[source, *quality], show_progress="hidden")
+            control.change(
+                apply_live, inputs=[source, *quality], show_progress="hidden"
+            )

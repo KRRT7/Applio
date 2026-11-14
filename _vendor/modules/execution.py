@@ -36,7 +36,11 @@ def suggest_execution_providers() -> List[str]:
 
 def suggest_execution_threads(execution_providers: List[str]) -> int:
     """Suggest a thread count for the given decoded providers."""
-    for single in ("DmlExecutionProvider", "ROCMExecutionProvider", "OpenVINOExecutionProvider"):
+    for single in (
+        "DmlExecutionProvider",
+        "ROCMExecutionProvider",
+        "OpenVINOExecutionProvider",
+    ):
         if single in execution_providers:
             return 1
     if "CUDAExecutionProvider" in execution_providers:

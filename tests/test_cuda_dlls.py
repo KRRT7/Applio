@@ -22,8 +22,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Build a one-node graph in-process, create a CUDA session, report providers.
-_SESSION = textwrap.dedent(
-    """
+_SESSION = textwrap.dedent("""
     import numpy as np, onnx, onnxruntime as ort
     from onnx import helper, TensorProto
     x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 8, 8])
@@ -36,8 +35,7 @@ _SESSION = textwrap.dedent(
     s = ort.InferenceSession(model.SerializeToString(), providers=["CUDAExecutionProvider"])
     s.run(None, {"x": np.ones((1, 3, 8, 8), np.float32)})
     print("PROVIDERS", s.get_providers()[0])
-    """
-)
+    """)
 
 
 @pytest.mark.parametrize(

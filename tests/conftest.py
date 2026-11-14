@@ -4,6 +4,7 @@ Tests run from the repository root with Applio's modules importable, and
 never touch the user's real settings or profiles: the Live page's config
 file and the profiles folder are redirected to a temporary directory.
 """
+
 import os
 import sys
 

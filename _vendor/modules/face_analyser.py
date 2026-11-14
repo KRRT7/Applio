@@ -10,8 +10,17 @@ import _vendor.modules.globals as _modules_globals  # noqa: F401  (loads the sub
 from _vendor.modules import imread_unicode, imwrite_unicode
 from tqdm import tqdm
 from _vendor.modules.typing import Frame
-from _vendor.modules.cluster_analysis import find_cluster_centroids, find_closest_centroid
-from _vendor.modules.utilities import get_temp_directory_path, create_temp, extract_frames, clean_temp, get_temp_frame_paths
+from _vendor.modules.cluster_analysis import (
+    find_cluster_centroids,
+    find_closest_centroid,
+)
+from _vendor.modules.utilities import (
+    get_temp_directory_path,
+    create_temp,
+    extract_frames,
+    clean_temp,
+    get_temp_frame_paths,
+)
 from pathlib import Path
 
 FACE_ANALYSER = None
@@ -19,7 +28,7 @@ FACE_ANALYSER_LOCK = threading.Lock()
 
 
 def _current_det_size() -> tuple:
-    s = int(getattr(modules.globals, 'det_size', modules.globals.DEFAULT_DET_SIZE))
+    s = int(getattr(modules.globals, "det_size", modules.globals.DEFAULT_DET_SIZE))
     return (s, s)
 
 
@@ -41,7 +50,10 @@ def reset_face_analyser() -> None:
 _ANALYSER_MODEL_FILES = ("det_10g.onnx", "w600k_r50.onnx", "2d106det.onnx")
 # Fixed input shapes for the batch-dynamic models, so CoreML gets a static
 # graph (the detector gets the same treatment in _optimize_det_model).
-_STATIC_INPUT_SHAPES = {"w600k_r50.onnx": (1, 3, 112, 112), "2d106det.onnx": (1, 3, 192, 192)}
+_STATIC_INPUT_SHAPES = {
+    "w600k_r50.onnx": (1, 3, 112, 112),
+    "2d106det.onnx": (1, 3, 192, 192),
+}
 
 
 def _build_face_analysis(providers) -> Any:
@@ -59,14 +71,17 @@ def _build_face_analysis(providers) -> Any:
     # warnings per call otherwise, which more than doubled detection time
     # on CUDA (8.7 ms vs 4.0 ms on an RTX 4060).
     onnxruntime.set_default_logger_severity(3)
-    model_dir = os.path.join(os.path.expanduser("~"), ".insightface", "models", "buffalo_l")
+    model_dir = os.path.join(
+        os.path.expanduser("~"), ".insightface", "models", "buffalo_l"
+    )
     analyser = insightface.app.FaceAnalysis.__new__(insightface.app.FaceAnalysis)
     analyser.model_dir = model_dir
     analyser.models = {}
     from _vendor.modules.onnx_optimize import IS_APPLE_SILICON, optimize_for_coreml
 
     uses_coreml = any(
-        (p[0] if isinstance(p, tuple) else p) == "CoreMLExecutionProvider" for p in providers
+        (p[0] if isinstance(p, tuple) else p) == "CoreMLExecutionProvider"
+        for p in providers
     )
     for filename in _ANALYSER_MODEL_FILES:
         path = os.path.join(model_dir, filename)
@@ -97,7 +112,7 @@ def get_face_analyser() -> Any:
                 )
                 from _vendor.modules.model_downloader import ensure_insightface_pack
 
-                ensure_insightface_pack('buffalo_l')
+                ensure_insightface_pack("buffalo_l")
                 providers = build_provider_config()
                 analyser = _build_face_analysis(providers)
                 det_size = _current_det_size()
@@ -120,11 +135,12 @@ def _optimize_det_model(fa: Any, providers, det_size: tuple) -> None:
     RetinaFace FPN upsampling path.  21ms → 4ms on M3 Max.
     """
     from _vendor.modules.onnx_optimize import optimize_for_coreml, IS_APPLE_SILICON
+
     if not IS_APPLE_SILICON:
         return
 
     det_model = fa.det_model
-    model_path = getattr(det_model, 'model_file', None)
+    model_path = getattr(det_model, "model_file", None)
     if model_path is None or not os.path.exists(model_path):
         return
 
@@ -135,6 +151,7 @@ def _optimize_det_model(fa: Any, providers, det_size: tuple) -> None:
         return
 
     import onnxruntime
+
     session_options = onnxruntime.SessionOptions()
     session_options.graph_optimization_level = (
         onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -148,15 +165,19 @@ def _optimize_det_model(fa: Any, providers, det_size: tuple) -> None:
     for p in providers:
         name = p[0] if isinstance(p, tuple) else p
         if name == "CoreMLExecutionProvider":
-            det_providers.append((
-                "CoreMLExecutionProvider",
-                {"ModelFormat": "MLProgram", "MLComputeUnits": "CPUAndGPU"},
-            ))
+            det_providers.append(
+                (
+                    "CoreMLExecutionProvider",
+                    {"ModelFormat": "MLProgram", "MLComputeUnits": "CPUAndGPU"},
+                )
+            )
         else:
             det_providers.append(p)
 
     det_model.session = onnxruntime.InferenceSession(
-        optimized_path, sess_options=session_options, providers=det_providers,
+        optimized_path,
+        sess_options=session_options,
+        providers=det_providers,
     )
 
 
@@ -169,8 +190,10 @@ def _needs_landmark() -> bool:
     if getattr(modules.globals, "mouth_mask", False):
         return True
     processors = getattr(modules.globals, "frame_processors", [])
-    return any(p in processors for p in
-               ("face_enhancer", "face_enhancer_gpen256", "face_enhancer_gpen512"))
+    return any(
+        p in processors
+        for p in ("face_enhancer", "face_enhancer_gpen256", "face_enhancer_gpen512")
+    )
 
 
 def _is_dml() -> bool:
@@ -198,9 +221,11 @@ def _analyse_faces(frame: Frame) -> list:
 
     faces = []
     for i in range(bboxes.shape[0]):
-        face = Face(bbox=bboxes[i, 0:4],
-                    kps=kpss[i] if kpss is not None else None,
-                    det_score=bboxes[i, 4])
+        face = Face(
+            bbox=bboxes[i, 0:4],
+            kps=kpss[i] if kpss is not None else None,
+            det_score=bboxes[i, 4],
+        )
         if rec_model is not None:
             rec_model.get(frame, face)
         if lmk_model is not None:
@@ -233,6 +258,7 @@ def get_many_faces(frame: Frame) -> Any:
     except IndexError:
         return None
 
+
 def detect_one_face_fast(frame: Frame) -> Any:
     """Detection-only — skips landmark and recognition models.
 
@@ -240,8 +266,9 @@ def detect_one_face_fast(frame: Frame) -> Any:
     ~10ms vs ~16ms for full get_one_face() at 1080p.
     """
     from insightface.app.common import Face
+
     fa = get_face_analyser()
-    bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric='default')
+    bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric="default")
     if bboxes.shape[0] == 0:
         return None
     idx = int(bboxes[:, 0].argmin())
@@ -251,12 +278,15 @@ def detect_one_face_fast(frame: Frame) -> Any:
 def detect_many_faces_fast(frame: Frame) -> Any:
     """Detection-only multi-face — skips landmark and recognition."""
     from insightface.app.common import Face
+
     fa = get_face_analyser()
-    bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric='default')
+    bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric="default")
     if bboxes.shape[0] == 0:
         return None
-    return [Face(bbox=bboxes[i, :4], kps=kpss[i], det_score=bboxes[i, 4])
-            for i in range(bboxes.shape[0])]
+    return [
+        Face(bbox=bboxes[i, :4], kps=kpss[i], det_score=bboxes[i, 4])
+        for i in range(bboxes.shape[0])
+    ]
 
 
 def ensure_landmarks(frame: Frame, faces: Any) -> None:
@@ -295,35 +325,37 @@ def has_valid_map() -> bool:
             return True
     return False
 
+
 def default_source_face() -> Any:
     for map in modules.globals.source_target_map:
         if "source" in map:
-            return map['source']['face']
+            return map["source"]["face"]
     return None
+
 
 def simplify_maps() -> Any:
     centroids = []
     faces = []
     for map in modules.globals.source_target_map:
         if "source" in map and "target" in map:
-            centroids.append(map['target']['face'].normed_embedding)
-            faces.append(map['source']['face'])
+            centroids.append(map["target"]["face"].normed_embedding)
+            faces.append(map["source"]["face"])
 
-    modules.globals.simple_map = {'source_faces': faces, 'target_embeddings': centroids}
+    modules.globals.simple_map = {"source_faces": faces, "target_embeddings": centroids}
     return None
+
 
 def add_blank_map() -> Any:
     try:
         max_id = -1
         if len(modules.globals.source_target_map) > 0:
-            max_id = max(modules.globals.source_target_map, key=lambda x: x['id'])['id']
+            max_id = max(modules.globals.source_target_map, key=lambda x: x["id"])["id"]
 
-        modules.globals.source_target_map.append({
-                'id' : max_id + 1
-                })
+        modules.globals.source_target_map.append({"id": max_id + 1})
     except ValueError:
         return None
-    
+
+
 def get_unique_faces_from_target_image() -> Any:
     try:
         modules.globals.source_target_map = []
@@ -334,35 +366,41 @@ def get_unique_faces_from_target_image() -> Any:
         i = 0
 
         for face in many_faces:
-            x_min, y_min, x_max, y_max = face['bbox']
-            modules.globals.source_target_map.append({
-                'id' : i, 
-                'target' : {
-                            'cv2' : target_frame[int(y_min):int(y_max), int(x_min):int(x_max)],
-                            'face' : face
-                            }
-                })
+            x_min, y_min, x_max, y_max = face["bbox"]
+            modules.globals.source_target_map.append(
+                {
+                    "id": i,
+                    "target": {
+                        "cv2": target_frame[
+                            int(y_min) : int(y_max), int(x_min) : int(x_max)
+                        ],
+                        "face": face,
+                    },
+                }
+            )
             i = i + 1
     except ValueError:
         return None
-    
-    
+
+
 def get_unique_faces_from_target_video() -> Any:
     try:
         modules.globals.source_target_map = []
         frame_face_embeddings = []
         face_embeddings = []
-    
-        print('Creating temp resources...')
+
+        print("Creating temp resources...")
         clean_temp(modules.globals.target_path)
         create_temp(modules.globals.target_path)
-        print('Extracting frames...')
+        print("Extracting frames...")
         extract_frames(modules.globals.target_path)
 
         temp_frame_paths = get_temp_frame_paths(modules.globals.target_path)
 
         i = 0
-        for temp_frame_path in tqdm(temp_frame_paths, desc="Extracting face embeddings from frames"):
+        for temp_frame_path in tqdm(
+            temp_frame_paths, desc="Extracting face embeddings from frames"
+        ):
             temp_frame = imread_unicode(temp_frame_path)
             many_faces = get_many_faces(temp_frame)
             if many_faces is None:
@@ -370,78 +408,104 @@ def get_unique_faces_from_target_video() -> Any:
 
             for face in many_faces:
                 face_embeddings.append(face.normed_embedding)
-            
-            frame_face_embeddings.append({'frame': i, 'faces': many_faces, 'location': temp_frame_path})
+
+            frame_face_embeddings.append(
+                {"frame": i, "faces": many_faces, "location": temp_frame_path}
+            )
             i += 1
 
         centroids = find_cluster_centroids(face_embeddings)
 
         for frame in frame_face_embeddings:
-            for face in frame['faces']:
-                closest_centroid_index, _ = find_closest_centroid(centroids, face.normed_embedding)
-                face['target_centroid'] = closest_centroid_index
+            for face in frame["faces"]:
+                closest_centroid_index, _ = find_closest_centroid(
+                    centroids, face.normed_embedding
+                )
+                face["target_centroid"] = closest_centroid_index
 
         for i in range(len(centroids)):
-            modules.globals.source_target_map.append({
-                'id' : i
-            })
+            modules.globals.source_target_map.append({"id": i})
 
             temp = []
-            for frame in tqdm(frame_face_embeddings, desc=f"Mapping frame embeddings to centroids-{i}"):
-                temp.append({'frame': frame['frame'], 'faces': [face for face in frame['faces'] if face['target_centroid'] == i], 'location': frame['location']})
+            for frame in tqdm(
+                frame_face_embeddings, desc=f"Mapping frame embeddings to centroids-{i}"
+            ):
+                temp.append(
+                    {
+                        "frame": frame["frame"],
+                        "faces": [
+                            face
+                            for face in frame["faces"]
+                            if face["target_centroid"] == i
+                        ],
+                        "location": frame["location"],
+                    }
+                )
 
-            modules.globals.source_target_map[i]['target_faces_in_frame'] = temp
+            modules.globals.source_target_map[i]["target_faces_in_frame"] = temp
 
         # dump_faces(centroids, frame_face_embeddings)
         default_target_face()
     except ValueError:
         return None
-    
+
 
 def default_target_face():
     for map in modules.globals.source_target_map:
         best_face = None
         best_frame = None
-        for frame in map['target_faces_in_frame']:
-            if len(frame['faces']) > 0:
-                best_face = frame['faces'][0]
+        for frame in map["target_faces_in_frame"]:
+            if len(frame["faces"]) > 0:
+                best_face = frame["faces"][0]
                 best_frame = frame
                 break
 
         if best_face is None:
             continue  # No faces detected in this cluster — skip
 
-        for frame in map['target_faces_in_frame']:
-            for face in frame['faces']:
-                if face['det_score'] > best_face['det_score']:
+        for frame in map["target_faces_in_frame"]:
+            for face in frame["faces"]:
+                if face["det_score"] > best_face["det_score"]:
                     best_face = face
                     best_frame = frame
 
-        x_min, y_min, x_max, y_max = best_face['bbox']
+        x_min, y_min, x_max, y_max = best_face["bbox"]
 
-        target_frame = imread_unicode(best_frame['location'])
-        map['target'] = {
-                        'cv2' : target_frame[int(y_min):int(y_max), int(x_min):int(x_max)],
-                        'face' : best_face
-                        }
+        target_frame = imread_unicode(best_frame["location"])
+        map["target"] = {
+            "cv2": target_frame[int(y_min) : int(y_max), int(x_min) : int(x_max)],
+            "face": best_face,
+        }
 
 
 def dump_faces(centroids: Any, frame_face_embeddings: list):
     temp_directory_path = get_temp_directory_path(modules.globals.target_path)
 
     for i in range(len(centroids)):
-        if os.path.exists(temp_directory_path + f"/{i}") and os.path.isdir(temp_directory_path + f"/{i}"):
+        if os.path.exists(temp_directory_path + f"/{i}") and os.path.isdir(
+            temp_directory_path + f"/{i}"
+        ):
             shutil.rmtree(temp_directory_path + f"/{i}")
         Path(temp_directory_path + f"/{i}").mkdir(parents=True, exist_ok=True)
 
         for frame in tqdm(frame_face_embeddings, desc=f"Copying faces to temp/./{i}"):
-            temp_frame = imread_unicode(frame['location'])
+            temp_frame = imread_unicode(frame["location"])
 
             j = 0
-            for face in frame['faces']:
-                if face['target_centroid'] == i:
-                    x_min, y_min, x_max, y_max = face['bbox']
+            for face in frame["faces"]:
+                if face["target_centroid"] == i:
+                    x_min, y_min, x_max, y_max = face["bbox"]
 
-                    if temp_frame[int(y_min):int(y_max), int(x_min):int(x_max)].size > 0:
-                        imwrite_unicode(temp_directory_path + f"/{i}/{frame['frame']}_{j}.png", temp_frame[int(y_min):int(y_max), int(x_min):int(x_max)])
+                    if (
+                        temp_frame[
+                            int(y_min) : int(y_max), int(x_min) : int(x_max)
+                        ].size
+                        > 0
+                    ):
+                        imwrite_unicode(
+                            temp_directory_path + f"/{i}/{frame['frame']}_{j}.png",
+                            temp_frame[
+                                int(y_min) : int(y_max), int(x_min) : int(x_max)
+                            ],
+                        )
                 j += 1
