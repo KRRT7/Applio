@@ -420,14 +420,12 @@ try:
 except ImportError:
     pass
 
-# Cache for paste-back
-_paste_cache = {
-    'soft_alpha': None,  # feathered alpha mask in aligned-face space
-    'alpha_size': 0,
-}
+# Cache for paste-back: feathered alpha templates in aligned-face space,
+# keyed by (size, shape).
+_paste_cache: dict = {}
 
 
-def _get_soft_alpha(size: int) -> np.ndarray:
+def _get_soft_alpha(size: int, shape: str = "ellipse") -> np.ndarray:
     """Feathered alpha template in aligned-face space, cached.
 
     The legacy paste-back eroded and Gaussian-blurred the warped mask in
@@ -437,25 +435,34 @@ def _get_soft_alpha(size: int) -> np.ndarray:
     per-frame gives a visually equivalent feather at O(crop_area) cost —
     the feather radius scales naturally with the affine transform.
     """
-    if _paste_cache['alpha_size'] != size:
-        # Elliptical (not square) template — matches the gumroad edition's
-        # _create_elliptical_mask. A full/eroded square leaves the aligned
-        # crop's corners near-opaque, so the swapped square's straight edges
-        # show as a visible box on the face. An ellipse (axes 0.44*size) zeroes
-        # the corners and the heavy blur feathers smoothly into the original.
-        center = (size // 2, size // 2)
-        axes = (int(size * 0.44), int(size * 0.44))
-        mask = np.zeros((size, size), dtype=np.uint8)
-        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
-        # Feather tuned for 256 px faces; scaled up for larger crops (pixel
-        # boost) so the seam stays as soft relative to the face. 128/256 px
-        # are unchanged.
-        scale = max(1.0, size / 256.0)
-        k = int(31 * scale) | 1
-        mask = cv2.GaussianBlur(mask, (k, k), 12 * scale)
-        _paste_cache['soft_alpha'] = mask  # uint8 [0, 255] — blended via cv2 SIMD ops
-        _paste_cache['alpha_size'] = size
-    return _paste_cache['soft_alpha']
+    key = (size, shape)
+    if key in _paste_cache:
+        return _paste_cache[key]
+    scale = max(1.0, size / 256.0)
+    if shape == "border":
+        # With a face-shaped mask the template only has to hide the crop's
+        # own edges: opaque inside, fading to zero over the outer ~4%.
+        fade = max(2, int(round(size * 0.04)))
+        ramp = np.clip(np.minimum(np.arange(size), np.arange(size)[::-1]) / fade, 0.0, 1.0)
+        mask = (np.minimum.outer(ramp, ramp) * 255.0 + 0.5).astype(np.uint8)
+        _paste_cache[key] = mask
+        return mask
+    # Elliptical (not square) template — matches the gumroad edition's
+    # _create_elliptical_mask. A full/eroded square leaves the aligned
+    # crop's corners near-opaque, so the swapped square's straight edges
+    # show as a visible box on the face. An ellipse (axes 0.44*size) zeroes
+    # the corners and the heavy blur feathers smoothly into the original.
+    center = (size // 2, size // 2)
+    axes = (int(size * 0.44), int(size * 0.44))
+    mask = np.zeros((size, size), dtype=np.uint8)
+    cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
+    # Feather tuned for 256 px faces; scaled up for larger crops (pixel
+    # boost) so the seam stays as soft relative to the face. 128/256 px
+    # are unchanged.
+    k = int(31 * scale) | 1
+    mask = cv2.GaussianBlur(mask, (k, k), 12 * scale)
+    _paste_cache[key] = mask  # uint8 [0, 255] — blended via cv2 SIMD ops
+    return mask
 
 # CUDA graph swap session cache
 _cuda_graph_session = {
@@ -563,7 +570,8 @@ def _cuda_graph_swap_inference(blob: np.ndarray, latent: np.ndarray) -> np.ndarr
 
 
 def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, M: np.ndarray,
-                     face_mask: Optional[np.ndarray] = None) -> Frame:
+                     face_mask: Optional[np.ndarray] = None, template: str = "ellipse",
+                     mask_feather: Optional[float] = None) -> Frame:
     """Paste bgr_fake back onto target_img via the inverse affine of M.
 
     Restricts work to the face bbox in output coordinates and warps a
@@ -601,11 +609,13 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, 
     IM_crop[1, 2] -= y1p
     crop_w, crop_h = x2p - x1p, y2p - y1p
 
-    soft_alpha = _get_soft_alpha(face_h)
+    soft_alpha = _get_soft_alpha(face_h, template)
     if face_mask is not None:
-        # Model-predicted face mask (HyperSwap): keep occluders such as
-        # glasses from the original, feathered, within the elliptical template.
-        soft_mask = cv2.GaussianBlur(face_mask, (0, 0), max(1.0, face_h / 128.0))
+        # Model-predicted face mask (HyperSwap) and/or the face-parsing mask:
+        # keep occluders such as glasses from the original, feathered,
+        # within the template.
+        sigma = mask_feather if mask_feather is not None else max(1.0, face_h / 128.0)
+        soft_mask = cv2.GaussianBlur(face_mask, (0, 0), sigma)
         soft_alpha = cv2.multiply(soft_alpha, soft_mask, scale=1.0 / 255.0)
     bgr_fake_crop = cv2.warpAffine(bgr_fake, IM_crop, (crop_w, crop_h), borderMode=cv2.BORDER_REPLICATE)
     alpha_crop = cv2.warpAffine(soft_alpha, IM_crop, (crop_w, crop_h), borderValue=0)
@@ -671,6 +681,10 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
     return paste_swapped_face(temp_frame, bgr_fake, M, target_face)
 
 
+# Feather (Gaussian sigma, px at a 256 px face) of the face-shaped mask edge.
+FACE_MASK_FEATHER = 4.0
+
+
 def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, target_face: Face) -> Frame:
     """Paste the swap model's aligned output back onto ``temp_frame``.
 
@@ -711,7 +725,20 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
         _face_size = bgr_fake.shape[0]
         _aimg_dummy = np.empty((_face_size, _face_size, 3), dtype=np.uint8)
 
-        swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M, model_mask)
+        template, feather = "ellipse", None
+        if getattr(modules.globals, "face_parsing_mask", False):
+            from _vendor.modules.processors.frame import face_parser
+            worker = face_parser.get_worker()
+            if worker is not None:
+                # Parse the real face (temp_frame is not pasted onto yet) in
+                # the same aligned space as the swap output.
+                aimg = cv2.warpAffine(temp_frame, M, (_face_size, _face_size),
+                                      flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+                parsed = worker.mask(aimg, M)
+                model_mask = parsed if model_mask is None else cv2.min(model_mask, parsed)
+                template, feather = "border", FACE_MASK_FEATHER * _face_size / 256.0
+
+        swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M, model_mask, template, feather)
 
     except Exception as e:
         print(f"Error during face swap: {e}")

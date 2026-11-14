@@ -27,6 +27,7 @@ MODEL_SIZES: Dict[str, int] = {
     "hyperswap_1a_256.onnx": 402742682,
     "hyperswap_1b_256.onnx": 402742682,
     "hyperswap_1c_256.onnx": 402742682,
+    "bisenet_resnet_18.onnx": 53205356,
 }
 
 # Models not hosted in the Deep-Live-Cam Hugging Face repo.
@@ -35,6 +36,10 @@ MODEL_URLS: Dict[str, str] = {
     f"hyperswap_{v}_256.onnx": f"{_FACEFUSION_ASSETS}hyperswap_{v}_256.onnx"
     for v in ("1a", "1b", "1c")
 }
+# Face parser for the face-shaped paste-back mask (processors/frame/face_parser.py).
+MODEL_URLS["bisenet_resnet_18.onnx"] = (
+    "https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/bisenet_resnet_18.onnx"
+)
 
 _LOCKS: Dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()

@@ -57,6 +57,7 @@ DEFAULTS = {
     "video_delay": 0,
     "swap_model": "hyperswap_1c_256",
     "pixel_boost": False,
+    "face_mask": True,
     "enhancer": "none",
     "det_size": 320,
     "mouth_mask": 0,
@@ -164,7 +165,7 @@ def _source_paths(gallery):
     return paths
 
 
-def _live_config(sources, swap_model, pixel_boost, enhancer, det_size, mouth_mask, sharpness,
+def _live_config(sources, swap_model, pixel_boost, face_mask, enhancer, det_size, mouth_mask, sharpness,
                  stabilization, detect_every_frame, color_correction, many_faces,
                  mirror, async_swap, show_fps):
     dlc = _dlc()
@@ -174,6 +175,7 @@ def _live_config(sources, swap_model, pixel_boost, enhancer, det_size, mouth_mas
         source_paths=paths[1:],
         swap_model=swap_model,
         pixel_boost=bool(pixel_boost) and str(swap_model).startswith("hyperswap"),
+        face_mask=bool(face_mask),
         enhancer=None if enhancer == "none" else enhancer,
         execution_providers=[dlc.suggest_default_execution_provider()],
         det_size=int(det_size),
@@ -215,7 +217,7 @@ def _stop_session():
         session.stop()
 
 
-_QUALITY_NAMES = ["swap model", "pixel boost", "enhancer", "detection size", "mouth mask", "sharpness",
+_QUALITY_NAMES = ["swap model", "pixel boost", "face mask", "enhancer", "detection size", "mouth mask", "sharpness",
                   "stabilization", "detect every frame", "color correction", "all faces",
                   "mirror", "async swap", "show fps"]
 
@@ -287,7 +289,7 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
         return
 
     save_settings({**load_settings(), **dict(zip(
-        ["source_paths", "camera", "resolution", "virtual_camera", "video_delay", "swap_model", "pixel_boost", "enhancer",
+        ["source_paths", "camera", "resolution", "virtual_camera", "video_delay", "swap_model", "pixel_boost", "face_mask", "enhancer",
          "det_size", "mouth_mask", "sharpness", "stabilization", "detect_every_frame",
          "color_correction", "many_faces", "mirror", "async_swap", "show_fps"],
         [paths, camera, resolution, bool(virtual_camera), float(video_delay or 0), *quality],
@@ -684,6 +686,10 @@ def live_tab():
                                 label=i18n("Pixel boost (512 px)"), value=saved["pixel_boost"],
                                 info=i18n("HyperSwap at 512 px: visibly sharper face, but the swap costs ~4x "
                                           "(about 12 fps on an RTX 4060, 10 on an M3). Pair with Async swap."))
+                            face_mask = gr.Checkbox(
+                                label=i18n("Face-shaped mask"), value=saved["face_mask"],
+                                info=i18n("Blend the swap along your real jaw and hairline instead of an oval, "
+                                          "keeping hair, hands and hats in front of the face. Uses a little extra GPU."))
                             enhancer = gr.Dropdown(label=i18n("Face enhancer"), choices=ENHANCERS, value=saved["enhancer"])
                             det_size = gr.Dropdown(label=i18n("Face detection size"), choices=DET_SIZES, value=saved["det_size"],
                                                    info=i18n("Lower is faster; 320 is plenty at webcam distance."))
@@ -731,7 +737,7 @@ def live_tab():
                                     lines=12, max_lines=22, autoscroll=True, buttons=["copy"])
 
         timer = gr.Timer(0.2, active=False)
-        quality = [swap_model, pixel_boost, enhancer, det_size, mouth_mask, sharpness, stabilization, detect_every_frame,
+        quality = [swap_model, pixel_boost, face_mask, enhancer, det_size, mouth_mask, sharpness, stabilization, detect_every_frame,
                    color_correction, many_faces, mirror, async_swap, show_fps]
         face_inputs = [source, camera, resolution, virtual_camera, video_delay, *quality]
 

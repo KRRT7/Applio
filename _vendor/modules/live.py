@@ -90,6 +90,11 @@ class LiveConfig:
     # HyperSwap only: swap at 512 px as four 256 px sub-pixel passes. Sharper
     # face; the swap costs ~4x.
     pixel_boost: bool = False
+    # Blend the swap through a mask of the real face's shape (skin, brows,
+    # eyes, nose, mouth) from a face-parsing model instead of a fixed
+    # ellipse: follows the jaw and hairline, keeps hair, hands and hats.
+    # Runs on a background thread (~45 ms per face on Apple Silicon).
+    face_mask: bool = True
     enhancer: Optional[str] = None          # None | "gfpgan" | "gpen256" | "gpen512"
     execution_providers: Sequence[str] = field(
         default_factory=lambda: [suggest_default_execution_provider()]
@@ -148,6 +153,7 @@ def configure(config: LiveConfig) -> None:
     g.source_path = g.source_paths[0] if g.source_paths else None
     g.swap_model = config.swap_model
     g.swap_pixel_boost = bool(config.pixel_boost)
+    g.face_parsing_mask = bool(config.face_mask)
     g.target_path = None
     g.map_faces = False
     g.many_faces = config.many_faces
