@@ -19,6 +19,10 @@ def _worker_loop(vc_kwargs, input_q, output_q, config_q, stop_evt, ready_evt):
     win_rt.boost_process()
     win_rt.boost_thread(win_rt.PRO_AUDIO)
 
+    # AMD / ZLUDA torch fixes. This process used to pick them up by re-running
+    # app.py on spawn, which no longer builds anything outside its main().
+    import rvc.lib.zluda  # noqa: F401
+
     try:
         vc = VoiceChanger(**vc_kwargs)
         vc.warmup(index_rate=vc_kwargs.get("index_rate", 0))

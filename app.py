@@ -19,6 +19,13 @@ if not os.path.exists(CONFIG_PATH):
     print("Config file not found. Creating fresh from template.")
     shutil.copy(CONFIG_TEMPLATE_PATH, CONFIG_PATH)
 
+# numpy, scipy and faiss each bundle their own OpenBLAS, and each one commits
+# per-thread buffers for every core at import: on a 16-thread CPU that is
+# ~2.3 GB of committed memory per process (this one and the voice worker,
+# which inherits the variable). Live only does small BLAS calls, which four
+# threads cover. An explicit setting still wins.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "4")
+
 # Plataform config
 from rvc.lib.platform import platform_config
 
@@ -26,7 +33,6 @@ platform_config()
 
 import argparse
 import types
-import gradio as gr
 import pathlib
 import logging
 
@@ -61,109 +67,120 @@ client_mode = _args.client
 _has_share = _args.share
 _has_open = _args.open
 
-# Set up logging
-logging.getLogger("uvicorn").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Suppress ConnectionResetError on Windows when a remote peer forcibly closes the
-# connection during asyncio shutdown (WinError 10054 / ProactorBasePipeTransport).
-if sys.platform == "win32":
-    import asyncio.proactor_events as _pe
+def build_app():
+    """Build the UI. Kept out of module scope: multiprocessing's "spawn" start
+    method re-runs this file in every child (the voice worker) as __mp_main__,
+    which would otherwise rebuild the whole UI there (~0.3 GB RAM, ~0.8 GB
+    committed and ~10 s before the voice model even starts loading)."""
+    global GRADIO_6, my_applio, app_css
+    import gradio as gr
 
-    _orig_ccl = _pe._ProactorBasePipeTransport._call_connection_lost
+    # Set up logging
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    def _ccl_patched(self, exc):
-        try:
-            _orig_ccl(self, exc)
-        except ConnectionResetError:
-            pass
+    # Suppress ConnectionResetError on Windows when a remote peer forcibly closes the
+    # connection during asyncio shutdown (WinError 10054 / ProactorBasePipeTransport).
+    if sys.platform == "win32":
+        import asyncio.proactor_events as _pe
 
-    _pe._ProactorBasePipeTransport._call_connection_lost = _ccl_patched
+        _orig_ccl = _pe._ProactorBasePipeTransport._call_connection_lost
 
-# Fix Gradio NoneType error when entering an invalid value
-gr.Number.preprocess = types.MethodType(
-    lambda self, payload: (
-        None
-        if payload is None
-        or (self.minimum is not None and payload < self.minimum)
-        or (self.maximum is not None and payload > self.maximum)
-        else self.round_to_precision(payload, self.precision)
-    ),
-    gr.Number,
-)
+        def _ccl_patched(self, exc):
+            try:
+                _orig_ccl(self, exc)
+            except ConnectionResetError:
+                pass
 
-# detect gradio
-GRADIO_6 = int(gr.__version__.split(".")[0]) >= 6
+        _pe._ProactorBasePipeTransport._call_connection_lost = _ccl_patched
 
-# Zluda hijack
-import rvc.lib.zluda
-
-# Import Tabs
-from assets.app_shell import build_workspace, create_theme, stylesheet
-from tabs.settings.settings import settings_tab
-from tabs.faceswap.faceswap import live_tab
-
-# Run prerequisites
-from core import run_prerequisites_script
-
-run_prerequisites_script(
-    models=True,
-    exe=True,
-)
-
-# Initialize i18n
-from assets.i18n.i18n import I18nAuto
-
-i18n = I18nAuto()
-
-# Check installation
-import assets.installation_checker as installation_checker
-
-installation_checker.check_installation()
-
-# Load theme
-import assets.themes.loadThemes as loadThemes
-
-my_applio = (
-    create_theme()
-    if loadThemes.read_current_theme() in ("Applio", "ParityError/Interstellar")
-    else loadThemes.load_theme() or create_theme()
-)
-app_css = stylesheet()
-
-# Define Gradio interface
-with gr.Blocks(
-    title="Applio",
-    **(
-        {
-            "theme": my_applio,
-            "css": app_css,
-            "js": (
-                (
-                    "() => {\n"
-                    + pathlib.Path(
-                        os.path.join(now_dir, "tabs", "realtime", "main.js")
-                    ).read_text()
-                    + "\n}"
-                )
-                if client_mode
-                else None
-            ),
-        }
-        if not GRADIO_6
-        else {}
-    ),
-) as Applio:
-    build_workspace(
-        {
-            "live": live_tab,
-            "settings": settings_tab,
-        },
-        i18n,
+    # Fix Gradio NoneType error when entering an invalid value
+    gr.Number.preprocess = types.MethodType(
+        lambda self, payload: (
+            None
+            if payload is None
+            or (self.minimum is not None and payload < self.minimum)
+            or (self.maximum is not None and payload > self.maximum)
+            else self.round_to_precision(payload, self.precision)
+        ),
+        gr.Number,
     )
 
+    # detect gradio
+    GRADIO_6 = int(gr.__version__.split(".")[0]) >= 6
 
-def launch_gradio(server_name: str, server_port: int) -> None:
+    # Zluda hijack
+    import rvc.lib.zluda
+
+    # Import Tabs
+    from assets.app_shell import build_workspace, create_theme, stylesheet
+    from tabs.settings.settings import settings_tab
+    from tabs.faceswap.faceswap import live_tab
+
+    # Run prerequisites
+    from core import run_prerequisites_script
+
+    run_prerequisites_script(
+        models=True,
+        exe=True,
+    )
+
+    # Initialize i18n
+    from assets.i18n.i18n import I18nAuto
+
+    i18n = I18nAuto()
+
+    # Check installation
+    import assets.installation_checker as installation_checker
+
+    installation_checker.check_installation()
+
+    # Load theme
+    import assets.themes.loadThemes as loadThemes
+
+    my_applio = (
+        create_theme()
+        if loadThemes.read_current_theme() in ("Applio", "ParityError/Interstellar")
+        else loadThemes.load_theme() or create_theme()
+    )
+    app_css = stylesheet()
+
+    # Define Gradio interface
+    with gr.Blocks(
+        title="Applio",
+        **(
+            {
+                "theme": my_applio,
+                "css": app_css,
+                "js": (
+                    (
+                        "() => {\n"
+                        + pathlib.Path(
+                            os.path.join(now_dir, "tabs", "realtime", "main.js")
+                        ).read_text()
+                        + "\n}"
+                    )
+                    if client_mode
+                    else None
+                ),
+            }
+            if not GRADIO_6
+            else {}
+        ),
+    ) as Applio:
+        build_workspace(
+            {
+                "live": live_tab,
+                "settings": settings_tab,
+            },
+            i18n,
+        )
+
+    return Applio
+
+
+def launch_gradio(Applio, server_name: str, server_port: int) -> None:
     app, _, _ = Applio.launch(
         favicon_path="assets/ICON.ico",
         share=_has_share,
@@ -200,12 +217,13 @@ def launch_gradio(server_name: str, server_port: int) -> None:
 
 
 if __name__ == "__main__":
+    Applio = build_app()
     port = _args.port
     server = _args.server_name
 
     for _ in range(MAX_PORT_ATTEMPTS):
         try:
-            launch_gradio(server, port)
+            launch_gradio(Applio, server, port)
             break
         except OSError:
             print(
