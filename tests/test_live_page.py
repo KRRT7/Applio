@@ -108,6 +108,27 @@ def test_room_noise_with_silent_output_is_not_a_warning(monkeypatch, clean_log):
     assert not any("Enable VAD" in line for line in clean_log)
 
 
+def test_late_blocks_are_reported_with_the_other_dropouts(monkeypatch, clean_log):
+    now = [0.0]
+    monkeypatch.setattr(fs.time, "monotonic", lambda: now[0])
+    stats = {"v": _stats(-30, -28)}
+    monkeypatch.setattr(fs, "_realtime", lambda: _fake_realtime(running=True, status="voice on", stats=stats["v"]))
+    fs._watch_voice()
+    stats["v"] = _stats(-30, -28, late_blocks=4)
+    fs._watch_voice()
+    warnings = [line for line in clean_log if "Audio may stutter" in line]
+    assert len(warnings) == 1 and "4 converted block(s) not ready in time" in warnings[0]
+
+
+def test_a_dead_voice_process_is_reported_once(monkeypatch, clean_log):
+    stats = {"v": _stats(-30, -28, voice_failed=True)}
+    monkeypatch.setattr(fs, "_realtime", lambda: _fake_realtime(running=True, status="voice on", stats=stats["v"]))
+    fs._watch_voice()
+    fs._watch_voice()
+    errors = [line for line in clean_log if "voice process stopped" in line]
+    assert len(errors) == 1 and "never your real voice" in errors[0]
+
+
 def test_dropouts_and_overruns_are_reported_once_per_batch(monkeypatch, clean_log):
     now = [0.0]
     monkeypatch.setattr(fs.time, "monotonic", lambda: now[0])

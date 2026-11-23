@@ -437,7 +437,8 @@ def _watch_voice():
     now = time.monotonic()
     if not w:
         w.update(silent_since=None, warned_silent=False, had_sound=False, gated_since=None,
-                 warned_gated=False, last_counts={}, last_report=float("-inf"), errors=0)
+                 warned_gated=False, last_counts={}, last_report=float("-inf"), errors=0,
+                 reported_failure=False)
     mic, out = st["input_db"], st["output_db"]
 
     if mic < _SILENT_DB:
@@ -463,7 +464,12 @@ def _watch_voice():
     else:
         w.update(gated_since=None, warned_gated=False)
 
-    counts = {k: st[k] for k in ("overruns", "input_overflows", "output_underflows")}
+    if st.get("voice_failed") and not w["reported_failure"]:
+        _log("Voice ERROR: the voice process stopped. The output is silent (never your real voice); "
+             "press Stop, then Start to restart it.")
+        w["reported_failure"] = True
+
+    counts = {k: st.get(k, 0) for k in ("overruns", "input_overflows", "output_underflows", "late_blocks")}
     new = {k: v - w["last_counts"].get(k, 0) for k, v in counts.items() if v > w["last_counts"].get(k, 0)}
     if new and now - w["last_report"] >= 5.0:
         parts = []
@@ -474,6 +480,8 @@ def _watch_voice():
             parts.append(f"{new['output_underflows']} output dropout(s)")
         if "input_overflows" in new:
             parts.append(f"{new['input_overflows']} lost input block(s)")
+        if "late_blocks" in new:
+            parts.append(f"{new['late_blocks']} converted block(s) not ready in time (sent as a short silence)")
         _log("Voice WARNING: " + "; ".join(parts) + ". Audio may stutter: try Async swap or a lighter "
              "face setting, or a larger Chunk Size.")
         w["last_counts"], w["last_report"] = counts, now

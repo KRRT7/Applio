@@ -1,0 +1,3 @@
+# The vendored Deep-Live-Cam patch series is applied byte for byte with
+# `git am --keep-cr` (scripts/vendor_dlc.py): never convert its line endings.
+tools/vendoring/patches/** -text

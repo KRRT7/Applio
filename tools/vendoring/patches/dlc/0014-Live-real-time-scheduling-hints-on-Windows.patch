@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <106575910+KRRT7@users.noreply.github.com>
+Date: Fri, 13 Nov 2026 16:07:31 -0800
+Subject: [PATCH] Live: real-time scheduling hints on Windows
+
+Windows ran the voice worker and face-swap threads at normal priority,
+competing with the browser, OBS or a game, and Windows 11 could move
+them to efficiency cores (EcoQoS) when the window lost focus.
+
+Add rvc/lib/win_rt.py (ctypes only, no-op off Windows, never raises):
+- boost_thread(task) registers the thread with MMCSS.
+- boost_process() raises to ABOVE_NORMAL and opts out of EcoQoS;
+  restore_process() undoes it.
+
+The voice worker process is boosted with its thread as "Pro Audio";
+audio callbacks register as "Pro Audio" (WASAPI already does this
+inside PortAudio, MME/DirectSound/ASIO did not). The Live session boosts
+the app process while it runs and restores it on stop; capture threads
+run as "Capture", detect/process as "Games".
+
+Vendored code changed: LiveSession takes an optional thread_hint
+callback, called on each worker thread as it starts, so the vendored
+package stays independent of Applio.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Applio-Commit: e8ae46da4d1bbcf10d0f28fa850b2cb57c7c37e3
+---
+ _vendor/modules/live.py | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/_vendor/modules/live.py b/_vendor/modules/live.py
+index cc62415..be1161b 100644
+--- a/_vendor/modules/live.py
++++ b/_vendor/modules/live.py
+@@ -610,8 +610,12 @@ class LiveSession:
+         fps: int = 60,
+         sinks: Sequence[FrameSink] = (),
+         capture_factory: Callable[[int], VideoCapturer] = VideoCapturer,
++        thread_hint: Optional[Callable[[str], None]] = None,
+     ):
+         self.camera_index = camera_index
++        # Called on each worker thread as it starts, with "capture", "detect"
++        # or "process", so the host can raise its scheduling priority.
++        self._thread_hint = thread_hint
+         self.requested = (width, height, fps)
+         self.sinks: List[FrameSink] = list(sinks)
+         self._capture_factory = capture_factory
+@@ -702,7 +706,15 @@ class LiveSession:
+ 
+     # threads
+ 
++    def _hint(self, role: str) -> None:
++        if self._thread_hint is not None:
++            try:
++                self._thread_hint(role)
++            except Exception:
++                pass  # a scheduling hint must never stop the session
++
+     def _capture_loop(self) -> None:
++        self._hint("capture")
+         while not self._stop.is_set():
+             ret, frame = self._cap.read()
+             if not ret:
+@@ -717,6 +729,7 @@ class LiveSession:
+         self._stop.set()
+ 
+     def _detect_loop(self) -> None:
++        self._hint("detect")
+         while not self._stop.is_set():
+             try:
+                 frame = self._capture_q.get(timeout=0.05)
+@@ -737,6 +750,7 @@ class LiveSession:
+                     continue
+ 
+     def _process_loop(self) -> None:
++        self._hint("process")
+         while not self._stop.is_set():
+             try:
+                 det = self._detect_q.get(timeout=0.05)

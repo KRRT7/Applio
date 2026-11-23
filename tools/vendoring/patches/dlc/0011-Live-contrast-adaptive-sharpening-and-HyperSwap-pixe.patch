@@ -1,0 +1,186 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Fri, 13 Nov 2026 02:12:53 -0500
+Subject: [PATCH] Live: contrast-adaptive sharpening and HyperSwap pixel boost
+
+Sharpening now uses CAS (clamped to the local range, so no halos) instead
+of unsharp masking. Pixel boost runs HyperSwap at 512 px by splitting the
+crop into four sub-pixel 256 tiles (sharper, ~3x slower). Both are in the
+Quality card and saved in profiles.
+
+Applio-Commit: b3d13c472839f63de59b53c64f48f94ab901357d
+---
+ _vendor/modules/globals.py                    |  1 +
+ _vendor/modules/gpu_processing.py             | 26 +++++++++-
+ _vendor/modules/live.py                       |  4 ++
+ .../modules/processors/frame/face_swapper.py  | 48 +++++++++++++++----
+ 4 files changed, 68 insertions(+), 11 deletions(-)
+
+diff --git a/_vendor/modules/globals.py b/_vendor/modules/globals.py
+index 3aec4fc..b6deb23 100644
+--- a/_vendor/modules/globals.py
++++ b/_vendor/modules/globals.py
+@@ -59,6 +59,7 @@ fp_ui: Dict[str, bool] = {"face_enhancer": False, "face_enhancer_gpen256": False
+ # Face Swapper Specific Options
+ face_swapper_enabled: bool = True # General toggle for the swapper processor
+ swap_model: str = "hyperswap_1c_256"  # see face_swapper.SWAP_MODELS
++swap_pixel_boost: bool = False  # HyperSwap: swap at 512 px as four 256 px sub-pixel passes
+ opacity: float = 1.0              # Blend factor for the swapped face (0.0-1.0)
+ sharpness: float = 0.0            # Sharpness enhancement for swapped face (0.0-1.0+)
+ 
+diff --git a/_vendor/modules/gpu_processing.py b/_vendor/modules/gpu_processing.py
+index 67de7ee..fad6372 100644
+--- a/_vendor/modules/gpu_processing.py
++++ b/_vendor/modules/gpu_processing.py
+@@ -10,7 +10,7 @@ codebase never has to care whether CUDA is available.
+ Usage
+ -----
+     from _vendor.modules.gpu_processing import (
+-        gpu_gaussian_blur, gpu_sharpen, gpu_add_weighted,
++        gpu_gaussian_blur, gpu_sharpen, gpu_add_weighted, cas_sharpen,
+         gpu_resize, gpu_cvt_color, gpu_flip,
+         is_gpu_accelerated,
+     )
+@@ -143,6 +143,30 @@ def gpu_add_weighted(
+ # Public API – Unsharp-mask sharpening
+ # ---------------------------------------------------------------------------
+ 
++def cas_sharpen(src: np.ndarray, amount: float) -> np.ndarray:
++    """Contrast Adaptive Sharpening (after AMD FidelityFX CAS).
++
++    Sharpens each pixel against its 4 neighbours with a negative-lobe filter
++    whose strength adapts to local contrast: strong where detail is soft,
++    little at already-hard edges, so it adds far less halo than an unsharp
++    mask. ``amount`` 0..1 maps to FidelityFX's sharpness 0..1.
++    """
++    if amount <= 0:
++        return src
++    x = _ensure_uint8(src).astype(np.float32) * (1.0 / 255.0)
++    cross = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
++    box = np.ones((3, 3), np.uint8)
++    # FidelityFX softens min/max by averaging the cross and 3x3 box extremes.
++    mn = 0.5 * (cv2.erode(x, cross) + cv2.erode(x, box))
++    mx = 0.5 * (cv2.dilate(x, cross) + cv2.dilate(x, box))
++    amp = np.sqrt(np.clip(np.minimum(mn, 1.0 - mx) / np.maximum(mx, 1e-5), 0.0, 1.0))
++    w = amp * (-1.0 / (8.0 - 3.0 * float(min(amount, 1.0))))  # peak: -1/8 .. -1/5
++    neighbours = cv2.filter2D(x, -1, np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], np.float32),
++                              borderType=cv2.BORDER_REFLECT)
++    out = (x + w * neighbours) / (1.0 + 4.0 * w)
++    return np.clip(out * 255.0 + 0.5, 0, 255).astype(np.uint8)
++
++
+ def gpu_sharpen(
+     src: np.ndarray,
+     strength: float,
+diff --git a/_vendor/modules/live.py b/_vendor/modules/live.py
+index 8d1c1bb..0e4e916 100644
+--- a/_vendor/modules/live.py
++++ b/_vendor/modules/live.py
+@@ -87,6 +87,9 @@ class LiveConfig:
+     # raised identity similarity from 0.785 to 0.810 on held-out frames).
+     source_paths: Sequence[str] = ()
+     swap_model: str = "hyperswap_1c_256"    # see SWAP_MODELS; fastest + best on Apple Silicon in our benchmark
++    # HyperSwap only: swap at 512 px as four 256 px sub-pixel passes. Sharper
++    # face; the swap costs ~4x.
++    pixel_boost: bool = False
+     enhancer: Optional[str] = None          # None | "gfpgan" | "gpen256" | "gpen512"
+     execution_providers: Sequence[str] = field(
+         default_factory=lambda: [suggest_default_execution_provider()]
+@@ -144,6 +147,7 @@ def configure(config: LiveConfig) -> None:
+     g.source_paths = new_paths
+     g.source_path = g.source_paths[0] if g.source_paths else None
+     g.swap_model = config.swap_model
++    g.swap_pixel_boost = bool(config.pixel_boost)
+     g.target_path = None
+     g.map_faces = False
+     g.many_faces = config.many_faces
+diff --git a/_vendor/modules/processors/frame/face_swapper.py b/_vendor/modules/processors/frame/face_swapper.py
+index 470c0d6..b31dc28 100644
+--- a/_vendor/modules/processors/frame/face_swapper.py
++++ b/_vendor/modules/processors/frame/face_swapper.py
+@@ -19,7 +19,7 @@ from _vendor.modules.utilities import (
+     is_video,
+ )
+ from _vendor.modules.cluster_analysis import find_closest_centroid
+-from _vendor.modules.gpu_processing import gpu_gaussian_blur, gpu_sharpen, gpu_add_weighted, gpu_resize
++from _vendor.modules.gpu_processing import gpu_gaussian_blur, gpu_add_weighted, gpu_resize, cas_sharpen
+ from _vendor.modules.platform_info import OPENVINO_PROVIDER_CONFIG
+ import os
+ from collections import deque
+@@ -288,20 +288,44 @@ class HyperSwapper:
+     which paste_swapped_face() uses for blending.
+     """
+ 
++    MODEL_SIZE = 256
++
+     def __init__(self, model_path: str, providers: list):
+         import onnxruntime
+ 
+         self.model_file = model_path
+         self.session = onnxruntime.InferenceSession(model_path, providers=providers)
+-        self.input_size = (256, 256)
+ 
+-    def swap_aligned(self, source_face: Face, aimg: np.ndarray) -> np.ndarray:
+-        blob = cv2.dnn.blobFromImage(aimg, 1.0 / 127.5, self.input_size, (127.5, 127.5, 127.5), swapRB=True)
+-        embedding = source_face.normed_embedding.reshape((1, -1)).astype(np.float32)
++    @property
++    def input_size(self):
++        """Aligned-face size: 256, or 512 with pixel boost (read per call, so
++        the setting can change while live)."""
++        size = self.MODEL_SIZE * (2 if getattr(modules.globals, "swap_pixel_boost", False) else 1)
++        return (size, size)
++
++    def _run(self, embedding: np.ndarray, crop: np.ndarray):
++        blob = cv2.dnn.blobFromImage(crop, 1.0 / 127.5, (self.MODEL_SIZE, self.MODEL_SIZE),
++                                     (127.5, 127.5, 127.5), swapRB=True)
+         out, mask = self.session.run(None, {"source": embedding, "target": blob})
+         rgb = np.clip((out[0].transpose(1, 2, 0) + 1.0) * 127.5, 0, 255).astype(np.uint8)
+         alpha = (np.clip(mask[0, 0], 0.0, 1.0) * 255).astype(np.uint8)
+-        return np.ascontiguousarray(np.dstack([rgb[:, :, ::-1], alpha]))
++        return np.dstack([rgb[:, :, ::-1], alpha])
++
++    def swap_aligned(self, source_face: Face, aimg: np.ndarray) -> np.ndarray:
++        embedding = source_face.normed_embedding.reshape((1, -1)).astype(np.float32)
++        size = aimg.shape[0]
++        if size == self.MODEL_SIZE:
++            return np.ascontiguousarray(self._run(embedding, aimg))
++        # Pixel boost: split the larger crop into factor² sub-pixel-offset
++        # images of the model's size (each still a whole face), swap each,
++        # and interleave the results back (as FaceFusion's pixel boost does).
++        factor = size // self.MODEL_SIZE
++        out = np.empty((size, size, 4), dtype=np.uint8)
++        for dy in range(factor):
++            for dx in range(factor):
++                out[dy::factor, dx::factor] = self._run(
++                    embedding, np.ascontiguousarray(aimg[dy::factor, dx::factor]))
++        return out
+ 
+     def get(self, img: Frame, target_face: Face, source_face: Face, paste_back: bool = False):
+         kps = np.asarray(target_face.kps, dtype=np.float32)
+@@ -423,7 +447,12 @@ def _get_soft_alpha(size: int) -> np.ndarray:
+         axes = (int(size * 0.44), int(size * 0.44))
+         mask = np.zeros((size, size), dtype=np.uint8)
+         cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
+-        mask = cv2.GaussianBlur(mask, (31, 31), 12)
++        # Feather tuned for 256 px faces; scaled up for larger crops (pixel
++        # boost) so the seam stays as soft relative to the face. 128/256 px
++        # are unchanged.
++        scale = max(1.0, size / 256.0)
++        k = int(31 * scale) | 1
++        mask = cv2.GaussianBlur(mask, (k, k), 12 * scale)
+         _paste_cache['soft_alpha'] = mask  # uint8 [0, 255] — blended via cv2 SIMD ops
+         _paste_cache['alpha_size'] = size
+     return _paste_cache['soft_alpha']
+@@ -988,10 +1017,9 @@ def apply_post_processing(current_frame: Frame, swapped_face_bboxes: List[np.nda
+             if face_region.size == 0:
+                 continue
+ 
+-            # Apply sharpening (GPU-accelerated when CUDA OpenCV is available)
++            # Contrast-adaptive sharpening: less halo than an unsharp mask.
+             try:
+-                sigma = 2 if IS_APPLE_SILICON else 3
+-                sharpened_region = gpu_sharpen(face_region, strength=sharpness_value, sigma=sigma)
++                sharpened_region = cas_sharpen(face_region, sharpness_value)
+                 processed_frame[y1:y2, x1:x2] = sharpened_region
+             except cv2.error:
+                 pass

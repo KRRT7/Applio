@@ -181,7 +181,8 @@ def test_pipeline_drives_the_async_swapper(clean_globals):
          patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]), \
          patch.object(live, "detect_one_face_fast", lambda *_: next(detections)), \
          patch.object(live, "update_status", lambda *_: None), \
-         patch.object(live, "ASYNC_SWAP_FACE_LOSS_GRACE_S", 0.2):
+         patch.object(live, "ASYNC_SWAP_FACE_LOSS_GRACE_S", 0.2), \
+         patch.object(live, "FACE_LOSS_HOLD_S", 0.0):  # held faces count as present; tested separately
         pipeline = live.FramePipeline(10.0)
         for _ in range(3):
             pipeline.process(_frame())
@@ -195,6 +196,169 @@ def test_pipeline_drives_the_async_swapper(clean_globals):
     steps = [s for s, _ in itertools.groupby(calls)]
     assert steps == ["init", "swap", "clear", "swap", "clear", "close"]
     assert calls[:3] == ["init", "swap", "swap"]
+
+
+# ─── face-loss safety: the real face never reaches the output ────────────
+
+# Camera frames are filled with 1..99; a swapped frame is the camera value
+# plus SWAPPED, so every output pixel says where it came from.
+SWAPPED = 100
+
+
+def _camera(k):
+    return np.full((16, 16, 3), k, dtype=np.uint8)
+
+
+class _Face:
+    def __init__(self, name):
+        self.name, self.kps, self.bbox = name, None, None
+
+
+def _run_pipeline(detections, swap_ok=lambda target: True, hold_s=10.0, async_swap=False, many=False):
+    """Process one camera frame per entry of ``detections`` (a face or None).
+
+    Returns [(output value, face_state, target the swap was asked for)].
+    """
+    asked = []
+
+    def attempt(_source, target, frame):
+        asked.append(target)
+        return frame + SWAPPED if swap_ok(target) else None
+
+    def swap_or_pass(s, t, f):
+        out = attempt(s, t, f)
+        return f if out is None else out
+
+    class _Async:
+        try_swap = staticmethod(attempt)
+        swap = staticmethod(swap_or_pass)
+
+        def clear(self):
+            pass
+
+        def close(self):
+            pass
+
+    class Swapper(_Swapper):
+        AsyncLiveSwapper = _Async
+        try_swap_face = staticmethod(attempt)
+        swap_face = staticmethod(swap_or_pass)
+
+    g.map_faces = g.mouth_mask = g.live_mirror = g.show_fps = False
+    g.many_faces, g.live_async_swap, g.live_detect_every_frame = many, async_swap, True
+    g.source_path = "A"
+    found = iter(detections)
+    out = []
+    with patch.object(live, "imread_unicode", lambda *_a, **_k: _frame()), \
+         patch.object(live, "get_one_face", lambda *_: object()), \
+         patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]), \
+         patch.object(live, "detect_one_face_fast", lambda *_: next(found)), \
+         patch.object(live, "update_status", lambda *_a, **_k: None), \
+         patch.object(live, "FACE_LOSS_HOLD_S", hold_s):
+        pipeline = live.FramePipeline(30.0)
+        for k in range(1, len(detections) + 1):
+            asked.append(None)
+            result = pipeline.process(_camera(k))
+            out.append((int(result[0, 0, 0]), pipeline.face_state, asked[-1]))
+        pipeline.close()
+    return out
+
+
+def test_short_detector_miss_reswaps_the_last_face(clean_globals):
+    face = _Face("me")
+    out = _run_pipeline([face, None, None, face])
+    assert [v for v, _, _ in out] == [101, 102, 103, 104]  # every frame swapped, none from the camera
+    assert [s for _, s, _ in out] == ["swapping", "holding", "holding", "swapping"]
+    assert all(t is face for _, _, t in out)  # the misses re-used the last face
+
+
+def test_long_miss_freezes_the_last_swapped_frame(clean_globals):
+    face = _Face("me")
+    out = _run_pipeline([face, face, None, None, None, face], hold_s=0.0)
+    assert [v for v, _, _ in out] == [101, 102, 102, 102, 102, 106]
+    assert [s for _, s, _ in out][2:5] == ["frozen"] * 3
+
+
+def test_failing_swap_sends_black_until_a_first_swap_then_freezes(clean_globals):
+    face = _Face("me")
+    works = iter([False, False, True, False, True])
+    out = _run_pipeline([face] * 5, swap_ok=lambda _t: next(works))
+    assert [v for v, _, _ in out] == [0, 0, 103, 103, 105]
+    assert [s for _, s, _ in out] == ["waiting", "waiting", "swapping", "frozen", "swapping"]
+
+
+def test_async_swap_never_shows_the_camera_before_its_first_result(clean_globals):
+    face = _Face("me")
+    ready = iter([False, False, True, True])
+    out = _run_pipeline([face] * 4, swap_ok=lambda _t: next(ready), async_swap=True)
+    assert [v for v, _, _ in out] == [0, 0, 103, 104]
+
+
+def test_output_never_carries_a_camera_frame_while_swapping(clean_globals):
+    import random
+
+    rng = random.Random(7)
+    face = _Face("me")
+    detections = [face if rng.random() < 0.6 else None for _ in range(80)]
+    detections[0] = face
+    out = _run_pipeline(detections, swap_ok=lambda _t: rng.random() < 0.8, hold_s=0.0)
+    first_swap = next(i for i, (v, _, _) in enumerate(out) if v > SWAPPED)
+    assert all(v == 0 for v, _, _ in out[:first_swap])
+    assert all(v > SWAPPED for v, _, _ in out[first_swap:])
+
+
+def test_swap_image_returns_a_still_unchanged_when_no_face_is_swapped(clean_globals):
+    class Swapper(_Swapper):
+        try_swap_face = staticmethod(lambda *_a: None)
+        swap_face = staticmethod(lambda _s, _t, f: f)
+
+    g.map_faces = g.mouth_mask = g.live_mirror = g.show_fps = g.many_faces = g.live_async_swap = False
+    g.source_path = "A"
+    with patch.object(live, "imread_unicode", lambda *_a, **_k: _frame()), \
+         patch.object(live, "get_one_face", lambda *_: object()), \
+         patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]), \
+         patch.object(live, "detect_one_face_fast", lambda *_: _Face("me")), \
+         patch.object(live, "update_status", lambda *_a, **_k: None):
+        assert int(live.swap_image(_camera(9))[0, 0, 0]) == 9
+
+
+def test_without_a_source_photo_the_camera_passes_through(clean_globals, no_faces):
+    g.source_path, g.source_paths, g.map_faces = None, (), False
+    pipeline = live.FramePipeline(30.0)
+    assert int(pipeline.process(_camera(7))[0, 0, 0]) == 7
+    assert pipeline.face_state == "off"
+
+
+def test_freezes_are_logged_at_most_once_per_interval_with_their_recovery(clean_globals):
+    face = _Face("me")
+    logs = []
+    clock = [0.0]
+    g.map_faces = g.mouth_mask = g.live_mirror = g.show_fps = g.many_faces = g.live_async_swap = False
+    g.source_path, g.live_detect_every_frame = "A", True
+
+    class Swapper(_Swapper):
+        try_swap_face = staticmethod(lambda _s, _t, f: f + SWAPPED)
+        swap_face = try_swap_face
+
+    detections = iter([face, None, face, None, face, None, face])
+    with patch.object(live, "imread_unicode", lambda *_a, **_k: _frame()), \
+         patch.object(live, "get_one_face", lambda *_: object()), \
+         patch.object(live, "get_frame_processors_modules", lambda *_: [Swapper]), \
+         patch.object(live, "detect_one_face_fast", lambda *_: next(detections)), \
+         patch.object(live, "update_status", lambda msg, *_a, **_k: logs.append(msg)), \
+         patch.object(live, "FACE_LOSS_HOLD_S", 0.0), \
+         patch.object(live.time, "monotonic", lambda: clock[0]):
+        pipeline = live.FramePipeline(30.0)
+        for step in (0.0, 0.1, 0.2, 2.0, 4.0, 4.1, 5.5):  # freezes at 0.1, 2.0 and 4.1 s
+            clock[0] = step
+            pipeline.process(_camera(1))
+    # The freeze at 2.0 s falls within the interval: neither it nor its end is logged.
+    assert [m for m in logs if m.startswith("Face")] == [
+        "Face not found: sending the last swapped frame instead of the camera.",
+        "Face found again (video was frozen for 0.1 s).",
+        "Face not found: sending the last swapped frame instead of the camera.",
+        "Face found again (video was frozen for 1.4 s).",
+    ]
 
 
 # ─── stabilization ────────────────────────────────────────────────────────

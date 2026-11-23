@@ -19,6 +19,26 @@ from rvc.realtime.pipeline import create_pipeline, CudaGraphCaptureError
 
 from rvc.realtime.constants import SAMPLE_RATE, AUDIO_SAMPLE_RATE  # noqa: F401  (re-exported)
 
+# Keep converting this long after the last block with speech before the
+# silence gate (threshold or VAD) closes. A soft syllable or a short dip in
+# the middle of a sentence otherwise cut the word and reset the conversion
+# context, so the next word started with an artifact.
+SPEECH_HANGOVER_S = 0.3
+
+
+def speech_hangover_blocks(block_samples_16k: int) -> int:
+    """Blocks of hangover for blocks of ``block_samples_16k`` at 16 kHz (at least 1)."""
+    return max(1, round(SPEECH_HANGOVER_S * SAMPLE_RATE / max(block_samples_16k, 1)))
+
+
+def gate_with_hangover(detected_silence: bool, hold_blocks: int, hangover_blocks: int):
+    """``(is_silence, hold_blocks)`` for the next block, given the detector's verdict."""
+    if not detected_silence:
+        return False, hangover_blocks
+    if hold_blocks > 0:
+        return False, hold_blocks - 1
+    return True, 0
+
 
 # Per-block constants of the phase vocoder, derived from the (immutable) fade
 # windows. The source tensors are kept referenced so their identity cannot be
@@ -152,6 +172,8 @@ class Realtime:
         self.silence_front = 0
         # Convert dB to RMS
         self.input_sensitivity = 10 ** (silent_threshold / 20)
+        self._hangover_blocks = 1
+        self._hold_blocks = 0
         self.window_size = self.sample_rate // 100
         self.kwargs = None
         model_path = resolve_logs_path(model_path)
@@ -233,6 +255,7 @@ class Realtime:
         self._formant_shifter = None
 
         self.block_frame_16k = block_frame_16k
+        self._hangover_blocks = speech_hangover_blocks(block_frame_16k)
         self.skip_head = extra_frame_16k // self.window_size
         self.return_length = self.convert_feature_size_16k - self.skip_head
         self.silence_front = (
@@ -324,13 +347,16 @@ class Realtime:
 
         # Advance context even while gated; stale speech must not be replayed.
         circular_write(audio_input_16k, self.convert_buffer)
-        is_silence = (
+        detected_silence = (
             (
                 not self.vad.is_speech(audio_input_16k.cpu().numpy().copy())
                 or vol < self.input_sensitivity
             )
             if self.vad is not None
             else vol < self.input_sensitivity
+        )
+        is_silence, self._hold_blocks = gate_with_hangover(
+            detected_silence, getattr(self, "_hold_blocks", 0), getattr(self, "_hangover_blocks", 1)
         )
 
         if is_silence:

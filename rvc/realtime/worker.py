@@ -245,6 +245,7 @@ class VoiceChangerWorker:
         self.block_frame = vc_kwargs.get("block_frame", 24576)
         self.sola_search_frame = AUDIO_SAMPLE_RATE // 100
         self.vc_model = _RealtimeState()
+        self.last_skipped = 0
 
     @property
     def ready(self):
@@ -284,14 +285,19 @@ class VoiceChangerWorker:
     def retrieve(self):
         """Get the latest processed result (non-blocking).
 
-        Returns (audio, vol, perf_ms, warmup_blocks) or None.
+        Returns (audio, vol, perf_ms, warmup_blocks) or None. Older results
+        still queued are dropped; ``last_skipped`` says how many, so the
+        caller can smooth over the jump.
         """
         result = None
+        received = 0
         while True:
             try:
                 result = self._output_q.get_nowait()
+                received += 1
             except Empty:
                 break
+        self.last_skipped = max(0, received - 1)
         if result is not None:
             self.vc_model.warmup_blocks = result[3]
         return result

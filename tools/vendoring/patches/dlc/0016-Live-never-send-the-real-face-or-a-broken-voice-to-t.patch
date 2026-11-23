@@ -1,0 +1,366 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <106575910+KRRT7@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 15:15:15 -0800
+Subject: [PATCH] Live: never send the real face or a broken voice to the call
+
+Vendored code changed: _vendor/modules/live.py and
+_vendor/modules/processors/frame/face_swapper.py.
+
+Face. A missed detection or a failed swap sent the camera frame
+unchanged, so the other side saw the real face. Measured with the real
+models on 720p frames with the eyes covered (the detector misses, the
+rest of the face stays visible): 60 of 60 frames leaked before, 0 after.
+- A miss shorter than FACE_LOSS_HOLD_S (0.5 s) re-swaps the face where
+  it was last seen.
+- Past that, or when the swap fails, the last swapped frame is sent
+  again (a frozen picture) until the face is found; black before the
+  first swap. Logged at most every 3 s with its recovery; exposed as
+  FramePipeline/LiveSession.face_state.
+- try_swap_face() and AsyncLiveSwapper.try_swap() return None when
+  nothing was pasted; swap_face()/swap() keep their behavior.
+- Off without source photos, in many-faces mode and for swap_image().
+
+Voice. The converted voice never stutters, loops or clicks:
+- A block the worker did not deliver in time fades to silence over
+  5 ms instead of replaying the previous block (a repeated syllable);
+  audio resumes, also after a dropped result, with a 5 ms fade-in.
+- A dead worker means silence and voice_failed, not the last block on
+  a loop; the Live log reports it once.
+- A failing audio callback outputs silence, not the driver's stale
+  buffer.
+- The silence gate stays open ~0.3 s after speech, so a short dip no
+  longer cuts the word and resets the conversion context.
+- Late blocks are counted and reported with the other dropouts.
+Real worker at 250 ms chunks with face swap running: 0 late blocks in
+80; killing the worker gave silence after the fade, flagged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Applio-Commit: f32a51e6d352be4bebc14db0ea18921b2e807044
+---
+ _vendor/modules/live.py                       | 126 ++++++++++++++++--
+ .../modules/processors/frame/face_swapper.py  |  39 ++++--
+ 2 files changed, 144 insertions(+), 21 deletions(-)
+
+diff --git a/_vendor/modules/live.py b/_vendor/modules/live.py
+index be1161b..04a349f 100644
+--- a/_vendor/modules/live.py
++++ b/_vendor/modules/live.py
+@@ -58,6 +58,17 @@ FrameSink = Callable[[Frame], None]
+ # of showing the real face for a whole inference.
+ ASYNC_SWAP_FACE_LOSS_GRACE_S = 0.5
+ 
++# The camera's real face must never reach the output while a swap is on.
++# A detector miss shorter than this (a hand passing, a quick turn, motion
++# blur) re-swaps the face where it was last seen. Past it, or whenever the
++# swap itself fails, the last swapped frame is sent again (a frozen picture,
++# like a network hiccup on a call) until the face is found; a black frame
++# before the first swap. See FramePipeline.face_state.
++FACE_LOSS_HOLD_S = 0.5
++# Log a freeze at most this often (and its recovery), so a face flickering
++# at the edge of detection does not flood the activity log.
++FACE_STATE_LOG_INTERVAL_S = 3.0
++
+ # Kept in step with modules.processors.frame.face_swapper.SWAP_MODELS (not
+ # imported here so configure() does not load the swapper module).
+ SWAP_MODELS = ("inswapper_128", "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256")
+@@ -209,7 +220,9 @@ def preload_models() -> None:
+ 
+ def swap_image(target: Frame) -> Frame:
+     """Swap the configured source face into a single BGR image."""
+-    pipeline = FramePipeline(camera_fps=1.0)  # detect on every frame
++    # A still image has no previous frame to freeze on: return it unchanged
++    # when no face is swapped.
++    pipeline = FramePipeline(camera_fps=1.0, guard_output=False)  # detect on every frame
+     try:
+         return pipeline.process(target.copy())
+     finally:
+@@ -282,6 +295,18 @@ class Detection:
+     target_face: object = None            # single-face mode
+     many_faces: Optional[list] = None     # many-faces mode
+     mapped: bool = False                  # map-faces mode: render() does its own detection
++    held: bool = False                    # target_face is the last one seen (detector missed)
++
++
++def _attempt_swap(try_swap, swap, source, target, frame):
++    """``(frame, swapped)``: ``try_swap`` returns None when nothing was pasted.
++
++    Processors without a ``try_*`` variant report every call as a swap.
++    """
++    if try_swap is None:
++        return swap(source, target, frame), True
++    out = try_swap(source, target, frame)
++    return (frame, False) if out is None else (out, True)
+ 
+ 
+ class FramePipeline:
+@@ -296,7 +321,9 @@ class FramePipeline:
+     call detect() from one thread and render() from one thread.
+     """
+ 
+-    def __init__(self, camera_fps: float = 30.0):
++    def __init__(self, camera_fps: float = 30.0, guard_output: bool = True):
++        # Live streams never pass the real face through (see FACE_LOSS_HOLD_S).
++        self._guard = guard_output
+         self._frame_processors = get_frame_processors_modules(modules.globals.frame_processors)
+         self._async_swapper = None
+         self._face_lost_at = None
+@@ -314,6 +341,18 @@ class FramePipeline:
+         self._frame_period = 1.0 / max(camera_fps, 1.0)
+         self._clock = 0.0
+         self._smoother = LandmarkSmoother()
++        # Face-loss safety (see FACE_LOSS_HOLD_S).
++        self._last_face = None
++        self._last_face_at = 0.0
++        self._cached_held = False
++        self._last_good: Optional[Frame] = None
++        # "off" (no swap configured, or many-faces mode), "swapping",
++        # "holding" (re-swapping the last seen face), "frozen" (sending the
++        # last swapped frame) or "waiting" (black until a first swap).
++        self.face_state = "off"
++        self._frozen_since = 0.0
++        self._last_freeze_log = float("-inf")
++        self._freeze_logged = False
+ 
+     def process(self, frame: Frame) -> Frame:
+         return self.render(self.detect(frame))
+@@ -328,6 +367,7 @@ class FramePipeline:
+             # a fresh detection afterwards.
+             self._cached_target_face = None
+             self._cached_many_faces = None
++            self._last_face = None
+             return Detection(temp_frame, mapped=True)
+ 
+         self._clock += self._frame_period
+@@ -338,17 +378,32 @@ class FramePipeline:
+                 self._cached_target_face = None
+                 self._cached_many_faces = detect_many_faces_fast(temp_frame)
+                 self._smoother.reset()
++                self._last_face, self._cached_held = None, False
+             else:
+                 face = detect_one_face_fast(temp_frame)
+-                strength = modules.globals.live_stabilization
+-                if face is None or strength <= 0 or getattr(face, "kps", None) is None:
+-                    self._smoother.reset()
++                now = time.monotonic()
++                held = False
++                if face is None:
++                    if self._last_face is not None and now - self._last_face_at < FACE_LOSS_HOLD_S:
++                        # A short miss: swap where the face was last seen
++                        # rather than let the real face through.
++                        face, held = self._last_face, True
++                    else:
++                        self._last_face = None
++                        self._smoother.reset()
+                 else:
+-                    face = _with_kps(face, self._smoother(face.kps, self._clock, strength))
++                    strength = modules.globals.live_stabilization
++                    if strength <= 0 or getattr(face, "kps", None) is None:
++                        self._smoother.reset()
++                    else:
++                        face = _with_kps(face, self._smoother(face.kps, self._clock, strength))
++                    self._last_face, self._last_face_at = face, now
+                 self._cached_target_face = face
++                self._cached_held = held
+                 self._cached_many_faces = None
+ 
+-        det = Detection(temp_frame, self._cached_target_face, self._cached_many_faces or None)
++        det = Detection(temp_frame, self._cached_target_face, self._cached_many_faces or None,
++                        held=self._cached_held and self._cached_target_face is not None)
+         # Fast detection skips the 2d106 landmark model, but the mouth mask
+         # needs it. Attach landmarks on demand.
+         faces = det.many_faces or ([det.target_face] if det.target_face is not None else None)
+@@ -454,6 +509,7 @@ class FramePipeline:
+         cached_faces = many or ([target_face] if target_face is not None else None)
+ 
+         source_image = self._source_image
++        has_swapper = swapped = False
+         for fp in self._frame_processors:
+             if fp.NAME == "DLC.FACE-ENHANCER":
+                 if modules.globals.fp_ui["face_enhancer"]:
+@@ -465,6 +521,7 @@ class FramePipeline:
+                 if modules.globals.fp_ui.get("face_enhancer_gpen512", False):
+                     temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
+             elif fp.NAME == "DLC.FACE-SWAPPER":
++                has_swapper = True
+                 swapped_bboxes = []
+                 if modules.globals.many_faces and many:
+                     result = temp_frame.copy()
+@@ -477,11 +534,15 @@ class FramePipeline:
+                     if modules.globals.live_async_swap:
+                         if self._async_swapper is None:
+                             self._async_swapper = fp.AsyncLiveSwapper()
+-                        temp_frame = self._async_swapper.swap(
+-                            source_image, target_face, temp_frame
++                        temp_frame, swapped = _attempt_swap(
++                            getattr(self._async_swapper, "try_swap", None), self._async_swapper.swap,
++                            source_image, target_face, temp_frame,
+                         )
+                     else:
+-                        temp_frame = fp.swap_face(source_image, target_face, temp_frame)
++                        temp_frame, swapped = _attempt_swap(
++                            getattr(fp, "try_swap_face", None), fp.swap_face,
++                            source_image, target_face, temp_frame,
++                        )
+                     if hasattr(target_face, "bbox") and target_face.bbox is not None:
+                         swapped_bboxes.append(target_face.bbox.astype(int))
+                 temp_frame = fp.apply_post_processing(temp_frame, swapped_bboxes)
+@@ -502,8 +563,46 @@ class FramePipeline:
+             )
+         ):
+             self._async_swapper.clear()
++
++        if self._guard and has_swapper and paths and not modules.globals.many_faces:
++            temp_frame = self._guard_output(temp_frame, swapped, det.held)
++        else:
++            self._last_good = None
++            self._set_face_state("off")
+         return temp_frame
+ 
++    def _guard_output(self, frame: Frame, swapped: bool, held: bool) -> Frame:
++        """Never send the real face while a swap is on (see FACE_LOSS_HOLD_S)."""
++        if swapped:
++            # The FPS overlay is drawn onto the returned frame afterwards.
++            self._last_good = frame.copy() if modules.globals.show_fps else frame
++            self._set_face_state("holding" if held else "swapping")
++            return frame
++        if self._last_good is not None:
++            self._set_face_state("frozen")
++            return self._last_good.copy()
++        self._set_face_state("waiting")
++        return np.zeros_like(frame)
++
++    def _set_face_state(self, state: str) -> None:
++        prev, self.face_state = self.face_state, state
++        if state == prev:
++            return
++        now = time.monotonic()
++        if state == "frozen":
++            self._frozen_since = now
++            self._freeze_logged = now - self._last_freeze_log >= FACE_STATE_LOG_INTERVAL_S
++            if self._freeze_logged:
++                self._last_freeze_log = now
++                update_status("Face not found: sending the last swapped frame instead of the camera.",
++                              "DLC.LIVE")
++        elif state == "waiting":
++            update_status("No face swapped yet: sending a black frame instead of the camera.", "DLC.LIVE")
++        elif prev == "frozen" and self._freeze_logged and state in ("swapping", "holding"):
++            self._freeze_logged = False
++            update_status(f"Face found again (video was frozen for {now - self._frozen_since:.1f} s).",
++                          "DLC.LIVE")
++
+     def _process_mapped(self, temp_frame: Frame) -> Frame:
+         modules.globals.target_path = None
+         # Resume from a fresh async result after map-faces.
+@@ -641,6 +740,11 @@ class LiveSession:
+     def fps(self) -> float:
+         return self._pipeline.fps if self._pipeline is not None else 0.0
+ 
++    @property
++    def face_state(self) -> str:
++        """See FramePipeline.face_state."""
++        return self._pipeline.face_state if self._pipeline is not None else "off"
++
+     @property
+     def latest_frame(self) -> Optional[Frame]:
+         with self._latest_lock:
+@@ -812,6 +916,6 @@ def run_cli(camera: Optional[int], width: int, height: int, virtual_camera: bool
+ 
+ 
+ __all__ = [
+-    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "DelayedSink", "Detection", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
++    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "FACE_LOSS_HOLD_S", "DelayedSink", "Detection", "ENHANCERS", "SWAP_MODELS", "LandmarkSmoother", "FramePipeline", "LiveConfig",
+     "LiveSession", "configure", "ensure_models", "preload_models", "run_cli", "swap_image",
+ ]
+diff --git a/_vendor/modules/processors/frame/face_swapper.py b/_vendor/modules/processors/frame/face_swapper.py
+index a400776..be7abdc 100644
+--- a/_vendor/modules/processors/frame/face_swapper.py
++++ b/_vendor/modules/processors/frame/face_swapper.py
+@@ -640,17 +640,30 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray,
+ 
+ 
+ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
+-    """Optimized face swapping with better memory management and performance."""
++    """Optimized face swapping with better memory management and performance.
++
++    Returns ``temp_frame`` unchanged when nothing could be swapped.
++    """
++    swapped = try_swap_face(source_face, target_face, temp_frame)
++    return temp_frame if swapped is None else swapped
++
++
++def try_swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Optional[Frame]:
++    """Like swap_face(), but None when no swapped face was pasted.
++
++    The live pipeline uses this to never send the camera's real face on a
++    failure (see live.FramePipeline).
++    """
+     face_swapper = get_face_swapper()
+     if face_swapper is None:
+         update_status("Face swapper model not loaded or failed to load. Skipping swap.", NAME)
+-        return temp_frame
++        return None
+ 
+     # Safety check for faces
+     if source_face is None or target_face is None:
+-        return temp_frame
++        return None
+     if not hasattr(source_face, 'normed_embedding') or source_face.normed_embedding is None:
+-        return temp_frame
++        return None
+ 
+     frame = temp_frame
+     if frame.dtype != np.uint8:
+@@ -672,10 +685,10 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
+             )
+     except Exception as e:
+         print(f"Error during face swap: {e}")
+-        return temp_frame
++        return None
+ 
+     if not isinstance(bgr_fake, np.ndarray):
+-        return temp_frame
++        return None
+     return paste_swapped_face(temp_frame, bgr_fake, M, target_face)
+ 
+ 
+@@ -825,13 +838,19 @@ class AsyncLiveSwapper:
+ 
+         Returns ``temp_frame`` unchanged until a first result is ready.
+         """
++        swapped = self.try_swap(source_face, target_face, temp_frame)
++        return temp_frame if swapped is None else swapped
++
++    def try_swap(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Optional[Frame]:
++        """Like swap(), but None when no result was pasted (none ready yet,
++        or it was made for another source or face)."""
+         # The model thread loads the model; until it has, frames pass through
+         # rather than this call waiting for it.
+         face_swapper = FACE_SWAPPER
+         if face_swapper is None or source_face is None or target_face is None:
+-            return temp_frame
++            return None
+         if getattr(source_face, "normed_embedding", None) is None:
+-            return temp_frame
++            return None
+ 
+         # Match swap_face(): norm_crop2()/warpAffine expects an 8-bit,
+         # contiguous frame, and the caller may hand us a view.
+@@ -846,7 +865,7 @@ class AsyncLiveSwapper:
+             aimg, M = face_align.norm_crop2(frame, kps, face_swapper.input_size[0])
+         except Exception as e:
+             print(f"Error during face swap: {e}")
+-            return frame
++            return None
+ 
+         if self._is_new_target(kps):
+             self.clear()
+@@ -857,7 +876,7 @@ class AsyncLiveSwapper:
+ 
+         # A result made for a previous source image must not be pasted.
+         if result is None or result[0] is not source_face:
+-            return frame
++            return None
+         return paste_swapped_face(frame, result[1], M, target_face)
+ 
+     def clear(self) -> None:
