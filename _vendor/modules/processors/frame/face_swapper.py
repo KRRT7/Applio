@@ -217,7 +217,7 @@ def pre_check() -> bool:
         return True
 
     variants = ["inswapper_128.onnx", "inswapper_128_fp16.onnx"]
-    if _HAS_TORCH_CUDA:
+    if _cuda_selected():
         variants.reverse()
     if ensure_any(variants) is None:
         update_status(
@@ -370,7 +370,7 @@ def get_face_swapper() -> Any:
             # older GPUs (e.g. GTX 16xx) where FP16 can produce NaN.
             fp32_path = os.path.join(models_dir, "inswapper_128.onnx")
             fp16_path = os.path.join(models_dir, "inswapper_128_fp16.onnx")
-            use_fp16 = _HAS_TORCH_CUDA and os.path.exists(fp16_path)
+            use_fp16 = _cuda_selected() and os.path.exists(fp16_path)
             if use_fp16:
                 model_path = fp16_path
             elif os.path.exists(fp32_path):
@@ -397,7 +397,7 @@ def get_face_swapper() -> Any:
                     providers=providers_config,
                 )
                 # Set up CUDA graph session for faster inference
-                if _HAS_TORCH_CUDA and any(
+                if any(
                     p == "CUDAExecutionProvider" or
                     (isinstance(p, tuple) and p[0] == "CUDAExecutionProvider")
                     for p in providers_config
@@ -412,13 +412,17 @@ def get_face_swapper() -> Any:
     return FACE_SWAPPER
 
 
-_HAS_TORCH_CUDA = False
-try:
-    import torch
-    if torch.cuda.is_available():
-        _HAS_TORCH_CUDA = True
-except ImportError:
-    pass
+def _cuda_selected() -> bool:
+    """Whether ONNX Runtime runs on CUDA (picks the fp16 inswapper).
+
+    Asks the configured providers rather than torch: importing torch here
+    put a second CUDA runtime (~0.3 GB of RAM) into the UI process, which
+    otherwise only needs ONNX Runtime.
+    """
+    return any(
+        (p[0] if isinstance(p, tuple) else p) == "CUDAExecutionProvider"
+        for p in modules.globals.execution_providers
+    )
 
 # Cache for paste-back: feathered alpha templates in aligned-face space,
 # keyed by (size, shape).
@@ -622,21 +626,15 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, 
 
     target_crop = target_img[y1p:y2p, x1p:x2p]
 
-    if _HAS_TORCH_CUDA:
-        # Scale alpha to [0, 1] on device — cheaper to upload uint8 than float.
-        mask_t = torch.from_numpy(alpha_crop).cuda().float().mul_(1.0 / 255.0).unsqueeze(2)
-        fake_t = torch.from_numpy(bgr_fake_crop).float().cuda()
-        tgt_t = torch.from_numpy(target_crop).float().cuda()
-        blended = (mask_t * fake_t + (1.0 - mask_t) * tgt_t).to(torch.uint8).cpu().numpy()
-        target_img[y1p:y2p, x1p:x2p] = blended
-    else:
-        # Fused uint8 blend via cv2 SIMD — no float32 round-trip.
-        # Measured ~7-8× faster than the old numpy float32 path on a 1000×1000 crop.
-        alpha_3c = cv2.merge([alpha_crop, alpha_crop, alpha_crop])
-        inv_alpha = 255 - alpha_3c
-        a_fake = cv2.multiply(bgr_fake_crop, alpha_3c, scale=1.0 / 255.0)
-        a_tgt = cv2.multiply(target_crop, inv_alpha, scale=1.0 / 255.0)
-        target_img[y1p:y2p, x1p:x2p] = cv2.add(a_fake, a_tgt)
+    # Fused uint8 blend via cv2 SIMD — no float32 round-trip. Faster than
+    # the former torch CUDA blend at face-crop sizes, which paid an upload
+    # and a download per face (RTX 4060: 0.15 vs 0.68 ms at 250 px, 0.43 vs
+    # 1.24 ms at 400 px), and identical within 1 level.
+    alpha_3c = cv2.merge([alpha_crop, alpha_crop, alpha_crop])
+    inv_alpha = 255 - alpha_3c
+    a_fake = cv2.multiply(bgr_fake_crop, alpha_3c, scale=1.0 / 255.0)
+    a_tgt = cv2.multiply(target_crop, inv_alpha, scale=1.0 / 255.0)
+    target_img[y1p:y2p, x1p:x2p] = cv2.add(a_fake, a_tgt)
 
     return target_img
 

@@ -7,7 +7,6 @@ import time
 import json
 import regex as re
 import shutil
-import torch
 
 now_dir = os.getcwd()
 sys.path.append(now_dir)
@@ -15,8 +14,9 @@ sys.path.append(now_dir)
 from rvc.realtime.callbacks import AudioCallbacks
 from rvc.realtime.audio import list_audio_device, resolve_sample_rate
 from rvc.realtime import audio_setup
-from rvc.realtime.core import AUDIO_SAMPLE_RATE
+from rvc.realtime.constants import AUDIO_SAMPLE_RATE
 from rvc.lib.user_config import BUNDLED_LOGS_PREFIX, get_bundled_logs_dir
+from rvc.lib.checkpoint_meta import read_checkpoint_metadata
 
 from assets.i18n.i18n import I18nAuto
 from assets.app_shell import step_card
@@ -279,9 +279,9 @@ def extract_model_and_epoch(path):
 def get_speakers_id(model):
     if model:
         try:
-            model_data = torch.load(
-                os.path.join(now_dir, model), map_location="cpu", weights_only=True
-            )
+            # Read without torch: this runs in the UI process, which never
+            # loads torch (only the voice worker does).
+            model_data = read_checkpoint_metadata(os.path.join(now_dir, model))
             speakers_id = model_data.get("speakers_id")
             if speakers_id:
                 return list(range(speakers_id))

@@ -7,7 +7,7 @@ now_dir = os.getcwd()
 sys.path.append(now_dir)
 
 from assets.i18n.i18n import I18nAuto
-from rvc.realtime.core import AUDIO_SAMPLE_RATE
+from rvc.realtime.constants import AUDIO_SAMPLE_RATE
 
 i18n = I18nAuto()
 
