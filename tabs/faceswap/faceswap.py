@@ -676,7 +676,15 @@ def live_tab():
     cameras = camera_choices()
     camera_values = [value for _label, value in cameras]
     saved_camera = saved["camera"] if saved["camera"] in camera_values else (camera_values[0] if camera_values else None)
+    # The saved paths are Gradio's upload copies, which Gradio deletes when the
+    # server stops; after a restart fall back to the selected profile's photos
+    # (permanent copies under logs/profiles/).
     saved_sources = [p for p in saved["source_paths"] if os.path.isfile(p)] or None
+    if saved_sources is None and saved["profile"] in profiles.list_profiles():
+        try:
+            saved_sources = profiles.load_profile(saved["profile"])["faces"] or None
+        except (OSError, ValueError):
+            pass
 
     with gr.Blocks():
         with gr.Row(equal_height=False):
@@ -785,7 +793,13 @@ def live_tab():
         voice_profile = ([rt.SESSION_CONTROLS["profile_inputs"][k] for k in profiles.VOICE_KEYS]
                          if rt is not None else [])
         load_profile, save_profile, delete_profile = _make_profile_handlers(rt is not None)
-        profile.select(load_profile, inputs=profile, outputs=[source, *face_profile, *voice_profile, status])
+        profile_outputs = [source, *face_profile, *voice_profile, status]
+        profile.select(load_profile, inputs=profile, outputs=profile_outputs)
+        # Opening the page applies the selected profile, as picking it would:
+        # photos, look and voice all belong to the same person.
+        root = gr.context.Context.root_block
+        if root is not None:
+            root.load(load_profile, inputs=profile, outputs=profile_outputs, show_progress="hidden")
         save_profile_btn.click(save_profile, inputs=[profile, source, *face_profile, *voice_profile],
                                outputs=[profile, source, status])
         delete_profile_btn.click(delete_profile, inputs=profile, outputs=[profile, status],
