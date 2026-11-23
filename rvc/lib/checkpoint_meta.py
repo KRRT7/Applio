@@ -41,7 +41,9 @@ def read_checkpoint_metadata(path):
     if not zipfile.is_zipfile(path):
         raise ValueError(f"not a zip-format torch checkpoint: {path}")
     with zipfile.ZipFile(path) as archive:
-        pickles = [n for n in archive.namelist() if n.endswith("/data.pkl") or n == "data.pkl"]
+        pickles = [
+            n for n in archive.namelist() if n.endswith("/data.pkl") or n == "data.pkl"
+        ]
         if not pickles:
             raise ValueError(f"no data.pkl in {path}")
         with archive.open(pickles[0]) as f:

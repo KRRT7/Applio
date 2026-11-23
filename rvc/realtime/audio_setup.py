@@ -24,11 +24,18 @@ import numpy as np
 HOST_PREFERENCE = ("WASAPI", "MME", "DirectSound", "Core Audio", "ALSA", "JACK")
 
 _VIRTUAL_WORDS = (
-    "vb-audio", "voicemeeter", "virtual", "blackhole", "loopback", "stereo mix",
+    "vb-audio",
+    "voicemeeter",
+    "virtual",
+    "blackhole",
+    "loopback",
+    "stereo mix",
     # macOS wrappers: "Applio Voice" is an aggregate around BlackHole for call
     # apps that hide BlackHole itself, so it carries Applio's own output;
     # Audio MIDI Setup names new ones "Aggregate Device" / "Multi-Output Device".
-    "applio voice", "aggregate device", "multi-output device",
+    "applio voice",
+    "aggregate device",
+    "multi-output device",
 )
 
 
@@ -42,8 +49,11 @@ def cable_name(mac=None):
 
 
 def mic_access_hint(mac=None):
-    return ("System Settings → Privacy & Security → Microphone" if _is_mac(mac)
-            else "Windows Settings → Privacy → Microphone")
+    return (
+        "System Settings → Privacy & Security → Microphone"
+        if _is_mac(mac)
+        else "Windows Settings → Privacy → Microphone"
+    )
 
 
 def _channels(name):
@@ -147,8 +157,13 @@ def pick(inputs, outputs, default_input=None, default_output=None, mac=None):
         )
 
     # Input: the system default mic, as long as it is a real one.
-    real_inputs = [d for d in inputs if not is_virtual(d.name) and "sound mapper" not in d.name.lower()
-                   and "primary sound" not in d.name.lower()]
+    real_inputs = [
+        d
+        for d in inputs
+        if not is_virtual(d.name)
+        and "sound mapper" not in d.name.lower()
+        and "primary sound" not in d.name.lower()
+    ]
     candidates = _best_host(real_inputs)
     if default_input is not None and not is_virtual(default_input.name):
         same = [d for d in candidates if _same_endpoint(d.name, default_input.name)]
@@ -156,12 +171,19 @@ def pick(inputs, outputs, default_input=None, default_output=None, mac=None):
     if candidates:
         setup.input = candidates[0]
     else:
-        setup.notes.append(f"No microphone found. Plug one in and allow microphone access in {mic_access_hint(mac)}.")
+        setup.notes.append(
+            f"No microphone found. Plug one in and allow microphone access in {mic_access_hint(mac)}."
+        )
 
     # Monitor device: the system default speakers/headphones. Only filled
     # in; whether to use it is the user's choice.
-    real_outputs = [d for d in outputs if not is_virtual(d.name) and "sound mapper" not in d.name.lower()
-                    and "primary sound" not in d.name.lower()]
+    real_outputs = [
+        d
+        for d in outputs
+        if not is_virtual(d.name)
+        and "sound mapper" not in d.name.lower()
+        and "primary sound" not in d.name.lower()
+    ]
     candidates = _best_host(real_outputs)
     if default_output is not None and not is_virtual(default_output.name):
         same = [d for d in candidates if _same_endpoint(d.name, default_output.name)]
@@ -212,7 +234,10 @@ def check(input_label, output_label, monitor_label, use_monitor, mac=None):
     if not input_label:
         steps["mic"] = (BAD, "No microphone selected")
     elif is_virtual(in_name):
-        steps["mic"] = (BAD, "This is a virtual device, not a microphone: Applio would hear nothing (or itself)")
+        steps["mic"] = (
+            BAD,
+            "This is a virtual device, not a microphone: Applio would hear nothing (or itself)",
+        )
     else:
         steps["mic"] = (OK, in_name)
 
@@ -221,25 +246,43 @@ def check(input_label, output_label, monitor_label, use_monitor, mac=None):
         steps["out"] = (BAD, "No output selected")
     elif capture:
         apps = "WhatsApp Web/Zoom/OBS" if _is_mac(mac) else "Discord/OBS/Zoom"
-        steps["out"] = (OK, f'{out_name} → in {apps} pick "{capture}" as the microphone')
+        steps["out"] = (
+            OK,
+            f'{out_name} → in {apps} pick "{capture}" as the microphone',
+        )
     elif is_virtual(out_name):
-        steps["out"] = (WARN, f"{out_name}: this looks like a recording device, not a cable's playback side")
+        steps["out"] = (
+            WARN,
+            f"{out_name}: this looks like a recording device, not a cable's playback side",
+        )
     else:
-        steps["out"] = (WARN, f"{out_name}: other apps can't use this as a mic. "
-                              f"Pick {cable_name(mac)} to send your voice to calls")
+        steps["out"] = (
+            WARN,
+            f"{out_name}: other apps can't use this as a mic. "
+            f"Pick {cable_name(mac)} to send your voice to calls",
+        )
 
     if use_monitor and monitor_label:
         if mon_name == out_name:
             steps["hear"] = (WARN, "Monitor is the same device as the output")
         elif is_virtual(mon_name):
-            steps["hear"] = (WARN, f"{mon_name} is virtual, so you still won't hear yourself")
+            steps["hear"] = (
+                WARN,
+                f"{mon_name} is virtual, so you still won't hear yourself",
+            )
         else:
             steps["hear"] = (OK, mon_name)
     elif capture:
-        steps["hear"] = (OFF, "Off: you won't hear yourself (the cable is silent by design). "
-                              "To listen, tick Use Monitor Device (Voice tab → Audio Devices → Monitor Device)")
+        steps["hear"] = (
+            OFF,
+            "Off: you won't hear yourself (the cable is silent by design). "
+            "To listen, tick Use Monitor Device (Voice tab → Audio Devices → Monitor Device)",
+        )
     else:
-        steps["hear"] = (OK, f"Through the output ({out_name})" if output_label else "Nothing")
+        steps["hear"] = (
+            OK,
+            f"Through the output ({out_name})" if output_label else "Nothing",
+        )
     return steps
 
 
@@ -253,8 +296,16 @@ def query():
     hostapis = sd.query_hostapis()
     devices = []
     for d in sd.query_devices():
-        devices.append(Device(d["index"], d["name"], hostapis[d["hostapi"]]["name"],
-                              d["max_input_channels"], d["max_output_channels"], d["default_samplerate"]))
+        devices.append(
+            Device(
+                d["index"],
+                d["name"],
+                hostapis[d["hostapi"]]["name"],
+                d["max_input_channels"],
+                d["max_output_channels"],
+                d["default_samplerate"],
+            )
+        )
     by_index = {d.index: d for d in devices}
 
     # The default endpoints as the most preferred host API reports them
@@ -294,7 +345,10 @@ def test_cable(output_index, seconds=0.6, level=0.1):
     if out is None:
         return False, "The output device was not found. Press Refresh Audio Devices."
     if not is_cable_playback(out.name):
-        return False, f"{out.name} is not a virtual cable, so there is nothing to loop back."
+        return (
+            False,
+            f"{out.name} is not a virtual cable, so there is nothing to loop back.",
+        )
     cap = find_capture(out, inputs)
     if cap is None:
         return False, f'Could not find "{cable_capture_name(out.name)}" to record from.'
@@ -302,7 +356,9 @@ def test_cable(output_index, seconds=0.6, level=0.1):
     sr = int(out.default_samplerate)
     wasapi = "WASAPI" in out.host_api
     extra_out = sd.WasapiSettings(auto_convert=True) if wasapi else None
-    extra_in = sd.WasapiSettings(auto_convert=True) if "WASAPI" in cap.host_api else None
+    extra_in = (
+        sd.WasapiSettings(auto_convert=True) if "WASAPI" in cap.host_api else None
+    )
     out_ch = min(2, out.max_output_channels)
     in_ch = min(2, cap.max_input_channels)
 
@@ -312,9 +368,9 @@ def test_cable(output_index, seconds=0.6, level=0.1):
     recorded = []
 
     def play(outdata, frames, _time, _status):
-        chunk = tone[pos[0]:pos[0] + frames]
+        chunk = tone[pos[0] : pos[0] + frames]
         outdata.fill(0)
-        outdata[:len(chunk)] = chunk[:, None]
+        outdata[: len(chunk)] = chunk[:, None]
         pos[0] += frames
 
     def record(indata, _frames, _time, _status):
@@ -328,14 +384,31 @@ def test_cable(output_index, seconds=0.6, level=0.1):
         if cap.index == out.index:
             # BlackHole on macOS: one device with both sides. Core Audio
             # refuses a second stream on it, so play and record in one.
-            with sd.Stream(device=out.index, channels=(in_ch, out_ch), samplerate=sr,
-                           dtype="float32", callback=duplex):
+            with sd.Stream(
+                device=out.index,
+                channels=(in_ch, out_ch),
+                samplerate=sr,
+                dtype="float32",
+                callback=duplex,
+            ):
                 sd.sleep(int(seconds * 1000) + 300)
         else:
-            with sd.InputStream(device=cap.index, channels=in_ch, samplerate=sr, dtype="float32",
-                                callback=record, extra_settings=extra_in):
-                with sd.OutputStream(device=out.index, channels=out_ch, samplerate=sr, dtype="float32",
-                                     callback=play, extra_settings=extra_out):
+            with sd.InputStream(
+                device=cap.index,
+                channels=in_ch,
+                samplerate=sr,
+                dtype="float32",
+                callback=record,
+                extra_settings=extra_in,
+            ):
+                with sd.OutputStream(
+                    device=out.index,
+                    channels=out_ch,
+                    samplerate=sr,
+                    dtype="float32",
+                    callback=play,
+                    extra_settings=extra_out,
+                ):
                     sd.sleep(int(seconds * 1000) + 300)
     except Exception as exc:
         return False, f"Could not open the cable: {exc}"
@@ -344,8 +417,16 @@ def test_cable(output_index, seconds=0.6, level=0.1):
         return False, "No audio came back from the cable."
     peak = float(np.max(np.abs(np.concatenate(recorded))))
     if peak < level * 0.2:
-        where = ("Audio MIDI Setup (Applications → Utilities)" if _is_mac()
-                 else "Windows Sound settings (Recording tab)")
-        return False, (f'Played a tone into {out.name} but "{cap.name}" stayed silent. '
-                       f"Check the cable isn't muted in {where}.")
-    return True, f'Cable works: a test tone sent to {out.name} came back on "{cap.name}".'
+        where = (
+            "Audio MIDI Setup (Applications → Utilities)"
+            if _is_mac()
+            else "Windows Sound settings (Recording tab)"
+        )
+        return False, (
+            f'Played a tone into {out.name} but "{cap.name}" stayed silent. '
+            f"Check the cable isn't muted in {where}."
+        )
+    return (
+        True,
+        f'Cable works: a test tone sent to {out.name} came back on "{cap.name}".',
+    )

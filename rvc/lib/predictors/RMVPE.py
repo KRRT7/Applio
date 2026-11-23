@@ -479,9 +479,9 @@ class RMVPE0Predictor:
             for start in range(0, pad_frames, chunk_size):
                 end = min(start + chunk_size, pad_frames)
                 mel_chunk = mel[..., start:end]
-                assert (
-                    mel_chunk.shape[-1] % 32 == 0
-                ), "chunk_size must be divisible by 32"
+                assert mel_chunk.shape[-1] % 32 == 0, (
+                    "chunk_size must be divisible by 32"
+                )
 
                 if fallback_cpu:
                     out_chunk = self.model(mel_chunk.cpu())

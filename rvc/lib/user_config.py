@@ -72,7 +72,9 @@ def resolve_logs_path(value):
         bundled = get_bundled_logs_dir()
         if bundled is None:
             raise ValueError(f"No bundled models are available: {value}")
-        return _resolve_inside(bundled, normalized[len(prefix) + 1 :], value, "bundled models")
+        return _resolve_inside(
+            bundled, normalized[len(prefix) + 1 :], value, "bundled models"
+        )
     return value
 
 

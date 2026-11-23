@@ -1,5 +1,6 @@
 """Tests for the realtime audio diagnostics (rvc/realtime/audio.py) and the
 voice status line built from them (tabs/realtime/realtime.py)."""
+
 import types
 
 import numpy as np
@@ -25,9 +26,15 @@ def test_levels_blocks_and_overruns(audio):
     audio.process_data_with_time(tone)
     st = audio.stats()
     assert st["blocks"] == 1 and st["overruns"] == 0
-    assert -24 < st["input_db"] < -22          # 0.1 amplitude sine: ~-23 dB RMS
-    assert st["output_db"] == pytest.approx(st["input_db"] - 6.02, abs=0.1)  # fake halves it
-    audio.process_data = lambda indata: (indata[:, 0], 0.0, 300.0)  # slower than the 250 ms block
+    assert -24 < st["input_db"] < -22  # 0.1 amplitude sine: ~-23 dB RMS
+    assert st["output_db"] == pytest.approx(
+        st["input_db"] - 6.02, abs=0.1
+    )  # fake halves it
+    audio.process_data = lambda indata: (
+        indata[:, 0],
+        0.0,
+        300.0,
+    )  # slower than the 250 ms block
     audio.process_data_with_time(tone)
     assert audio.stats()["overruns"] == 1
 
@@ -38,7 +45,15 @@ def test_silence_reads_as_minus_infinity(audio):
 
 
 def test_driver_flags_and_callback_errors_are_counted(audio):
-    flags = type("Flags", (), {"input_overflow": True, "output_underflow": True, "__bool__": lambda self: True})()
+    flags = type(
+        "Flags",
+        (),
+        {
+            "input_overflow": True,
+            "output_underflow": True,
+            "__bool__": lambda self: True,
+        },
+    )()
     audio._note_status(flags)
     audio._note_status(None)
     audio.out_queue = None
@@ -57,14 +72,31 @@ def test_driver_flags_and_callback_errors_are_counted(audio):
 def test_voice_status_line_formatting(monkeypatch):
     from tabs.realtime import realtime as rt
 
-    stats = dict(input_db=-32.0, output_db=float("-inf"), latency_ms=4.0, block_ms=250.0, blocks=5,
-                 overruns=1, input_overflows=0, output_underflows=2, callback_errors=0, last_error=None)
+    stats = dict(
+        input_db=-32.0,
+        output_db=float("-inf"),
+        latency_ms=4.0,
+        block_ms=250.0,
+        blocks=5,
+        overruns=1,
+        input_overflows=0,
+        output_underflows=2,
+        callback_errors=0,
+        last_error=None,
+    )
     am = types.SimpleNamespace(stats=lambda: stats, latency=4.0)
-    cb = types.SimpleNamespace(vc=types.SimpleNamespace(ready=True, vc_model=types.SimpleNamespace(warmup_blocks=0)))
+    cb = types.SimpleNamespace(
+        vc=types.SimpleNamespace(
+            ready=True, vc_model=types.SimpleNamespace(warmup_blocks=0)
+        )
+    )
     monkeypatch.setattr(rt, "running", True)
     monkeypatch.setattr(rt, "audio_manager", am)
     monkeypatch.setattr(rt, "callbacks", cb)
     line = rt.voice_status()
-    assert line == "voice on · mic -32 dB ▮▮▮▯▯▯ · out silent ▯▯▯▯▯▯ · 4/250 ms per block · overruns 1 · dropouts 2"
+    assert (
+        line
+        == "voice on · mic -32 dB ▮▮▮▯▯▯ · out silent ▯▯▯▯▯▯ · 4/250 ms per block · overruns 1 · dropouts 2"
+    )
     monkeypatch.setattr(rt, "running", False)
     assert rt.voice_status() is None and rt.voice_stats() is None

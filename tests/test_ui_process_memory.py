@@ -67,7 +67,12 @@ def test_checkpoint_metadata_matches_torch_load(tmp_path):
 
     path = tmp_path / "voice.pth"
     torch.save(
-        {"weight": {"emb_g.weight": torch.zeros(3, 4)}, "speakers_id": 3, "config": [1, 2, 48000], "f0": 1},
+        {
+            "weight": {"emb_g.weight": torch.zeros(3, 4)},
+            "speakers_id": 3,
+            "config": [1, 2, 48000],
+            "f0": 1,
+        },
         path,
     )
     meta = read_checkpoint_metadata(str(path))

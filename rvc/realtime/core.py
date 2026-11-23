@@ -356,7 +356,9 @@ class Realtime:
             else vol < self.input_sensitivity
         )
         is_silence, self._hold_blocks = gate_with_hangover(
-            detected_silence, getattr(self, "_hold_blocks", 0), getattr(self, "_hangover_blocks", 1)
+            detected_silence,
+            getattr(self, "_hold_blocks", 0),
+            getattr(self, "_hangover_blocks", 1),
         )
 
         if is_silence:
@@ -675,9 +677,9 @@ class VoiceChanger:
                 # Apply sin² fade-in over crossfade_frame duration from onset.
                 fade_len = min(block_size - onset_sample, self.crossfade_frame)
                 if fade_len > 0:
-                    audio[
-                        onset_sample : onset_sample + fade_len
-                    ] *= self.fade_in_window[:fade_len]
+                    audio[onset_sample : onset_sample + fade_len] *= (
+                        self.fade_in_window[:fade_len]
+                    )
             else:
                 audio[: self.crossfade_frame] *= self.fade_in_window
                 audio[: self.crossfade_frame] += self.sola_buffer * self.fade_out_window

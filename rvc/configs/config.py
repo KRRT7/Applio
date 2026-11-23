@@ -37,7 +37,9 @@ class Config:
         self.gpu_name = (
             torch.cuda.get_device_name(int(self.device.split(":")[-1]))
             if self.device.startswith("cuda")
-            else "Apple Silicon GPU (MPS)" if self.device == "mps" else None
+            else "Apple Silicon GPU (MPS)"
+            if self.device == "mps"
+            else None
         )
         self.json_config = self.load_config_json()
         self.gpu_mem = None

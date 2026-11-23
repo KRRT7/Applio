@@ -1,4 +1,5 @@
 """Tests for contrast-adaptive sharpening and HyperSwap pixel boost."""
+
 import cv2
 import numpy as np
 import pytest
@@ -23,13 +24,17 @@ def test_cas_zero_is_identity_and_flat_stays_flat():
 
 def test_cas_sharpens_edges_with_less_overshoot_than_unsharp():
     img = _edge_image()
-    lap = lambda im: cv2.Laplacian(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+    lap = lambda im: cv2.Laplacian(
+        cv2.cvtColor(im, cv2.COLOR_BGR2GRAY), cv2.CV_64F
+    ).var()
     cas = cas_sharpen(img, 0.6)
     assert lap(cas) > 1.3 * lap(img)
     # overshoot beyond the local 5x5 range of the original (bright/dark fringes)
     k = np.ones((5, 5), np.uint8)
     lo, hi = cv2.erode(img, k).astype(int), cv2.dilate(img, k).astype(int)
-    over = lambda s: (np.maximum(0, s.astype(int) - hi) + np.maximum(0, lo - s.astype(int))).sum()
+    over = lambda s: (
+        np.maximum(0, s.astype(int) - hi) + np.maximum(0, lo - s.astype(int))
+    ).sum()
     unsharp = gpu_sharpen(img, strength=0.4, sigma=2)  # roughly matched detail
     assert lap(unsharp) >= 0.9 * lap(cas)
     assert over(cas) == 0 < over(unsharp)  # CAS clamps to the local range: no halos
@@ -52,7 +57,9 @@ def swapper():
     s = HyperSwapper.__new__(HyperSwapper)
     s.session = _IdentitySession()
     s.model_file = "fake.onnx"
-    face = type("F", (), {"normed_embedding": np.ones(512, np.float32) / np.sqrt(512)})()
+    face = type(
+        "F", (), {"normed_embedding": np.ones(512, np.float32) / np.sqrt(512)}
+    )()
     saved = g.swap_pixel_boost
     yield s, face
     g.swap_pixel_boost = saved
@@ -72,7 +79,9 @@ def test_pixel_boost_split_and_interleave_round_trips(swapper):
     aimg = rng.integers(0, 256, (512, 512, 3), dtype=np.uint8)
     out = s.swap_aligned(face, aimg)
     assert s.session.calls == 4 and out.shape == (512, 512, 4)
-    assert np.abs(out[:, :, :3].astype(int) - aimg.astype(int)).max() <= 1  # normalisation rounding only
+    assert (
+        np.abs(out[:, :, :3].astype(int) - aimg.astype(int)).max() <= 1
+    )  # normalisation rounding only
     assert (out[:, :, 3] == 255).all()
 
 

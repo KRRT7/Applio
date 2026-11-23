@@ -32,9 +32,9 @@ class MultiHeadAttention(torch.nn.Module):
         proximal_init: bool = False,
     ):
         super().__init__()
-        assert (
-            channels % n_heads == 0
-        ), "Channels must be divisible by the number of heads."
+        assert channels % n_heads == 0, (
+            "Channels must be divisible by the number of heads."
+        )
 
         self.channels = channels
         self.out_channels = out_channels
