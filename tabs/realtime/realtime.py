@@ -14,6 +14,7 @@ sys.path.append(now_dir)
 
 from rvc.realtime.callbacks import AudioCallbacks
 from rvc.realtime.audio import list_audio_device, resolve_sample_rate
+from rvc.realtime import audio_setup
 from rvc.realtime.core import AUDIO_SAMPLE_RATE
 from rvc.lib.user_config import BUNDLED_LOGS_PREFIX, get_bundled_logs_dir
 
@@ -967,6 +968,39 @@ def get_audio_devices_formatted():
         return {}, {}
 
 
+def auto_setup_devices(save=True):
+    """Pick mic -> virtual cable, and fill in the speakers as the monitor
+    device. Whether the monitor is used stays the user's choice (Use
+    Monitor Device); this never switches it on or off.
+
+    Returns (input_label, output_label, monitor_label, notes,
+    input_choices, output_choices). Labels are None when nothing fits.
+    """
+    if not running:
+        # Pick up devices plugged in (or a cable installed) since startup.
+        # Not while live: re-initialising PortAudio would kill the stream.
+        try:
+            sd._terminate()
+            sd._initialize()
+        except Exception:
+            pass
+    inputs, outputs = get_audio_devices_formatted()
+    try:
+        all_in, all_out, default_in, default_out = audio_setup.query()
+    except Exception as exc:
+        return None, None, None, [f"Could not list audio devices: {exc}"], list(inputs), list(outputs)
+    setup = audio_setup.pick(all_in, all_out, default_in, default_out)
+    in_label = audio_setup.label_for(setup.input, inputs)
+    out_label = audio_setup.label_for(setup.output, outputs)
+    mon_label = audio_setup.label_for(setup.monitor, outputs)
+    if save and (in_label or out_label):
+        save_realtime_settings(
+            input_device=in_label or "", output_device=out_label or "",
+            monitor_device=mon_label or "",
+        )
+    return in_label, out_label, mon_label, setup.notes, list(inputs), list(outputs)
+
+
 def update_dropdowns_from_json(data):
     if not data:
         return [
@@ -1064,6 +1098,13 @@ def realtime_tab(embedded=False):
         input_devices, output_devices = list(input_devices.keys()), list(
             output_devices.keys()
         )
+        if not saved_settings["input_device"] and not saved_settings["output_device"]:
+            # First run: route mic -> virtual cable, monitor on the speakers.
+            in_label, out_label, mon_label, notes, _, _ = auto_setup_devices(save=True)
+            print(f"[Realtime] Auto audio setup: in={in_label} out={out_label} "
+                  f"monitor device={mon_label} (off until Use Monitor Device is ticked)"
+                  + (f" ({'; '.join(notes)})" if notes else ""))
+            saved_settings = load_realtime_settings()
     else:
         input_devices = (
             [saved_settings["client_input_device"]]
@@ -1082,6 +1123,9 @@ def realtime_tab(embedded=False):
         with step_card(1, "Audio Devices", i18n, description="Choose input, output and optional monitor devices for live voice."):
             with gr.Row():
                 refresh_devices_button = gr.Button(i18n("Refresh Audio Devices"))
+                auto_setup_button = gr.Button(
+                    i18n("Auto-setup"), variant="secondary", visible=not client_mode
+                )
             with gr.Row():
                 with gr.Accordion(i18n("Input Device"), open=True):
                     with gr.Column():
@@ -1514,24 +1558,15 @@ def realtime_tab(embedded=False):
                         ),
                         interactive=True,
                     )
-        with step_card(
-            5,
-            "Terms of Use" if hide_controls else "Start Realtime",
-            i18n,
-            description=(
-                "Agree to the terms before starting voice with the Live controls."
-                if hide_controls
-                else "Agree to the terms and start or stop the live session."
-            ),
+        # No terms checkbox to tick: it is kept (hidden, always on) only
+        # because the start handlers take it as their first input. On the
+        # Live page this whole card is hidden; Start/Stop live there.
+        with (
+            gr.Column(visible=False)
+            if hide_controls
+            else step_card(5, "Start Realtime", i18n, description="Start or stop the live session.")
         ):
-            terms_checkbox = gr.Checkbox(
-                label=i18n("I agree to the terms of use"),
-                info=i18n(
-                    "Please ensure compliance with the terms and conditions detailed in [this document](https://github.com/IAHispano/Applio/blob/main/TERMS_OF_USE.md) before proceeding with your realtime."
-                ),
-                value=saved_settings.get("terms_accepted", False),
-                interactive=True,
-            )
+            terms_checkbox = gr.Checkbox(value=True, visible=False)
             with gr.Row():
                 start_button = gr.Button(i18n("Start"), variant="primary", visible=not hide_controls)
                 stop_button = gr.Button(i18n("Stop"), interactive=False, visible=False)
@@ -1658,6 +1693,28 @@ def realtime_tab(embedded=False):
                     output_audio_device,
                     monitor_output_device,
                 ],
+            )
+
+            def auto_setup_click():
+                in_label, out_label, mon_label, notes, ins, outs = auto_setup_devices()
+                for note in notes:
+                    gr.Warning(note)
+                if in_label or out_label:
+                    gr.Info(i18n("Audio devices set up."))
+                return (
+                    gr.update(choices=ins, value=in_label) if in_label else gr.update(choices=ins),
+                    gr.update(choices=outs, value=out_label) if out_label else gr.update(choices=outs),
+                    gr.update(choices=outs, value=mon_label) if mon_label else gr.update(choices=outs),
+                )
+
+            auto_setup_button.click(
+                fn=auto_setup_click,
+                outputs=[input_audio_device, output_audio_device, monitor_output_device],
+            )
+            use_monitor_device.change(
+                fn=lambda v: save_realtime_settings(use_monitor_device=bool(v)),
+                inputs=[use_monitor_device],
+                outputs=[],
             )
 
         autotune.change(
@@ -1888,6 +1945,13 @@ def realtime_tab(embedded=False):
                 },
                 list_models=lambda: sorted(get_files("model")),
                 list_indexes=lambda: sorted(get_files("index")),
+                # For the Live page's audio panel.
+                devices={
+                    "input": input_audio_device, "output": output_audio_device,
+                    "monitor": monitor_output_device, "use_monitor": use_monitor_device,
+                },
+                auto_setup=auto_setup_devices,
+                device_labels=get_audio_devices_formatted,
             )  # .then(
             #     fn=lambda: (
             #         yield gr.update(value="Stopped"),

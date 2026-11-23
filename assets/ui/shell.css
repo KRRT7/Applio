@@ -367,3 +367,22 @@ html { scrollbar-gutter: stable; }
 @media (max-width: 680px) {
   .applio-output-row, .applio-f0-results { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Live page: audio routing panel */
+.applio-audio { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; font-size: 13px; color: var(--app-text); }
+.applio-audio-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.applio-audio-head strong { font-size: 14px; color: var(--app-heading); }
+.applio-audio-pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
+.applio-audio-row { display: grid; grid-template-columns: 14px 92px minmax(0, 1fr); align-items: start; gap: 8px; }
+.applio-audio-row .lbl { color: var(--app-muted); }
+.applio-audio-row .txt { overflow-wrap: anywhere; line-height: 1.4; }
+.applio-audio-dot { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; background: currentColor; }
+.applio-audio .ok { color: #22c55e; } .applio-audio .warn { color: #f59e0b; } .applio-audio .bad { color: #ef4444; } .applio-audio .off { color: #71717a; } .applio-audio .live { color: #38bdf8; }
+.applio-audio .txt.ok, .applio-audio .txt.off { color: var(--app-text); }
+.applio-audio-meter { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: var(--app-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.applio-audio-meter .bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.applio-audio-meter .fill { height: 100%; border-radius: 3px; background: #22c55e; transition: width .15s linear; }
+.applio-audio-meter .fill.hot { background: #f59e0b; } .applio-audio-meter .fill.clip { background: #ef4444; }
+.applio-audio-foot { color: var(--app-muted); font-size: 12px; line-height: 1.5; border-top: 1px solid var(--app-border); padding-top: 8px; }
+.applio-audio-foot .ok, .applio-audio-foot .bad { font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .applio-audio-meter .fill { transition: none; } }

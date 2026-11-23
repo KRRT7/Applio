@@ -14,6 +14,8 @@ import threading
 import time
 from collections import deque
 
+import html
+
 import cv2
 import gradio as gr
 
@@ -510,6 +512,144 @@ def _status_text():
     return _summary() + ("\n" + "─" * 40 + "\n" + "\n".join(lines) if lines else "")
 
 
+# ─── audio panel (voice routing at a glance) ──────────────────────────────
+
+# The voice settings the panel describes; updated from the Voice tab's
+# controls whenever they change (a single local user, so module state is fine).
+_AUDIO = {"input": None, "output": None, "monitor": None, "use_monitor": False,
+          "model": None, "test": None}
+_AUDIO_LAST_HTML = [None]
+
+_PILL = {"ok": "Ready", "warn": "Check setup", "bad": "Not ready", "live": "Live"}
+
+
+def _meter(db):
+    if db is None or db == float("-inf"):
+        return ('<div class="applio-audio-meter"><div class="bar"><div class="fill" style="width:0%">'
+                '</div></div><span>silent</span></div>')
+    frac = max(0.0, min(1.0, (db + 60.0) / 60.0))
+    cls = "clip" if db > -1 else "hot" if db > -6 else ""
+    return (f'<div class="applio-audio-meter"><div class="bar"><div class="fill {cls}" style="width:{frac * 100:.0f}%">'
+            f'</div></div><span>{db:.0f} dB</span></div>')
+
+
+def _row(label, level, text, extra=""):
+    return (f'<div class="applio-audio-row"><span class="applio-audio-dot {level}" aria-hidden="true"></span>'
+            f'<span class="lbl">{html.escape(label)}</span>'
+            f'<div class="txt {level}">{html.escape(text)}{extra}</div></div>')
+
+
+def audio_panel_html():
+    """The Live page's audio panel: each step of mic -> voice -> cable ->
+    you, with a status dot, and live level meters while voice runs."""
+    from rvc.realtime import audio_setup as aus
+
+    a = _AUDIO
+    steps = aus.check(a["input"], a["output"], a["monitor"], a["use_monitor"])
+    rt = _realtime()
+    st = rt.voice_stats() if rt is not None and hasattr(rt, "voice_stats") else None
+    live = bool(st and st.get("blocks"))
+    voice_state = rt.voice_status() if rt is not None else None
+
+    mic_extra = out_extra = ""
+    mic, out, hear = steps["mic"], steps["out"], steps["hear"]
+    problems = []  # (level, text) shown under the rows
+    if not a["model"]:
+        problems.append((aus.BAD, "No voice model selected (Voice tab → Model)"))
+    elif voice_state and not live:
+        problems.append((aus.WARN, voice_state))
+    w = _VOICE_WATCH
+    if live:
+        mic_extra, out_extra = _meter(st["input_db"]), _meter(st["output_db"])
+        if w.get("warned_silent"):
+            mic = (aus.WARN, mic[1] + " · no sound for 5 s: check the mic and its Windows volume")
+        if w.get("warned_gated"):
+            out = (aus.WARN, out[1] + " · you're speaking but the output is silent: "
+                   "lower Silence Threshold or turn off VAD")
+
+    levels = [mic[0], out[0], *(level for level, _ in problems)]
+    overall = "bad" if aus.BAD in levels else "warn" if aus.WARN in levels else ("live" if live else "ok")
+    pill = _PILL[overall]
+    if live and overall != "live":
+        pill = "Live · " + pill.lower()
+
+    foot = [f'<span class="{level}">{html.escape(text)}</span>' for level, text in problems]
+    if a["test"] is not None:
+        ok, msg = a["test"]
+        foot.append(f'<span class="{"ok" if ok else "bad"}">{"✓" if ok else "✗"} {html.escape(msg)}</span>')
+    foot.append(html.escape(i18n("Change devices in the Voice tab → Audio Devices, or press Auto-setup audio.")))
+
+    return (
+        '<div class="applio-audio" role="status" aria-live="off">'
+        f'<div class="applio-audio-head"><strong>{html.escape(i18n("Audio"))}</strong>'
+        f'<span class="applio-audio-pill {overall}">{html.escape(pill)}</span></div>'
+        + _row(i18n("Microphone"), *mic, extra=mic_extra)
+        + _row(i18n("Sends to"), *out, extra=out_extra)
+        + _row(i18n("You hear"), *hear)
+        + f'<div class="applio-audio-foot">{"<br>".join(foot)}</div></div>'
+    )
+
+
+def _audio_update(force=False):
+    text = audio_panel_html()
+    if not force and text == _AUDIO_LAST_HTML[0]:
+        return gr.skip()
+    _AUDIO_LAST_HTML[0] = text
+    return text
+
+
+def set_audio_config(input_label, output_label, monitor_label, use_monitor, model):
+    if output_label != _AUDIO["output"]:
+        _AUDIO["test"] = None  # an earlier cable test was for another device
+    _AUDIO.update(input=input_label, output=output_label, monitor=monitor_label,
+                  use_monitor=bool(use_monitor), model=model)
+    return _audio_update(force=True)
+
+
+def auto_setup_audio():
+    """Live page Auto-setup: pick devices and push them into the Voice tab."""
+    rt = _realtime()
+    in_label, out_label, mon_label, notes, ins, outs = rt.SESSION_CONTROLS["auto_setup"]()
+    for note in notes:
+        gr.Warning(note)
+    _log("Audio auto-setup: mic {} | output {} | monitor {}".format(
+        in_label or "none", out_label or "none", mon_label or "none")
+        + (" | " + " ".join(notes) if notes else ""))
+    _AUDIO.update(input=in_label or _AUDIO["input"], output=out_label or _AUDIO["output"],
+                  monitor=mon_label or _AUDIO["monitor"], test=None)
+    return (
+        gr.update(choices=ins, value=in_label) if in_label else gr.update(choices=ins),
+        gr.update(choices=outs, value=out_label) if out_label else gr.update(choices=outs),
+        gr.update(choices=outs, value=mon_label) if mon_label else gr.update(choices=outs),
+        _audio_update(force=True),
+        _status_text(),
+    )
+
+
+def test_audio_cable(output_label):
+    """Live page Test cable: loop a short tone through the selected cable."""
+    from rvc.realtime import audio_setup as aus
+
+    rt = _realtime()
+    if rt is not None and rt.running:
+        gr.Warning(i18n("Stop voice first: the test tone would go into your call."))
+        return gr.skip(), gr.skip()
+    index = rt.SESSION_CONTROLS["device_labels"]()[1].get(output_label) if rt is not None else None
+    if index is None:
+        ok, msg = False, "Select an output device first (or press Auto-setup audio)."
+    else:
+        ok, msg = aus.test_cable(index)
+    _AUDIO["test"] = (ok, msg)
+    _log(f"Audio cable test: {'OK' if ok else 'FAILED'}: {msg}")
+    (gr.Info if ok else gr.Warning)(msg)
+    return _audio_update(force=True), _status_text()
+
+
+def poll_live():
+    """Timer tick: preview, status and the audio panel's meters."""
+    return (*poll_preview(), _audio_update())
+
+
 def poll_preview():
     _watch_voice()
     with _LOCK:
@@ -762,6 +902,15 @@ def live_tab():
                     stop = gr.Button(i18n("Stop"))
                 gr.Markdown(i18n("Start runs whatever is switched on. Voice uses the settings in the Voice tab."),
                             elem_classes="applio-card-desc")
+                if rt is not None:
+                    dev = rt.SESSION_CONTROLS["devices"]
+                    _AUDIO.update(input=dev["input"].value, output=dev["output"].value,
+                                  monitor=dev["monitor"].value, use_monitor=bool(dev["use_monitor"].value),
+                                  model=rt.SESSION_CONTROLS["profile_inputs"]["model_file"].value)
+                    audio_panel = gr.HTML(audio_panel_html())
+                    with gr.Row():
+                        auto_audio = gr.Button(i18n("Auto-setup audio"), size="sm")
+                        test_audio = gr.Button(i18n("Test cable"), size="sm")
                 status = gr.Textbox(label=i18n("Status"), value=i18n("Stopped."), interactive=False,
                                     lines=12, max_lines=22, autoscroll=True, buttons=["copy"])
 
@@ -781,7 +930,8 @@ def live_tab():
                         outputs=[status, timer, video_delay])
             start.click(start_voice_if_enabled, inputs=[voice_on, *controls["start_inputs"]],
                         outputs=controls["outputs"])
-            stop.click(stop_voice, outputs=controls["outputs"])
+            stop.click(stop_voice, outputs=controls["outputs"]).then(
+                lambda: _audio_update(force=True), outputs=audio_panel, show_progress="hidden")
             match_voice.click(estimate_voice_delay, inputs=controls["timing_inputs"], outputs=video_delay)
         else:
             zero = gr.Number(value=0, visible=False)
@@ -805,6 +955,17 @@ def live_tab():
         delete_profile_btn.click(delete_profile, inputs=profile, outputs=[profile, status],
                                  js="(name) => (name && confirm('Delete profile \"' + name + '\"? Its saved photos are removed.')) ? name : null")
 
-        timer.tick(poll_preview, outputs=[preview, status, timer], show_progress="hidden")
+        if rt is not None:
+            dev = rt.SESSION_CONTROLS["devices"]
+            audio_inputs = [dev["input"], dev["output"], dev["monitor"], dev["use_monitor"],
+                            rt.SESSION_CONTROLS["profile_inputs"]["model_file"]]
+            for control in audio_inputs:
+                control.change(set_audio_config, inputs=audio_inputs, outputs=audio_panel, show_progress="hidden")
+            auto_audio.click(auto_setup_audio,
+                             outputs=[dev["input"], dev["output"], dev["monitor"], audio_panel, status])
+            test_audio.click(test_audio_cable, inputs=dev["output"], outputs=[audio_panel, status])
+            timer.tick(poll_live, outputs=[preview, status, timer, audio_panel], show_progress="hidden")
+        else:
+            timer.tick(poll_preview, outputs=[preview, status, timer], show_progress="hidden")
         for control in [source, *quality]:
             control.change(apply_live, inputs=[source, *quality], show_progress="hidden")
