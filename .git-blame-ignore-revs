@@ -1,0 +1,5 @@
+# Mechanical reformatting commits, skipped by `git blame` (GitHub reads this
+# file; locally: git config blame.ignoreRevsFile .git-blame-ignore-revs).
+
+# Format the code with Ruff 0.17.6 (uv format)
+28e7c3701838a08a81baf70ead34ea52232eb80d
