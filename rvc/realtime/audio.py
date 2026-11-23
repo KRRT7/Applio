@@ -204,6 +204,10 @@ class Audio:
             "blocks": self.blocks, "overruns": self.overruns,
             "input_overflows": self.input_overflows, "output_underflows": self.output_underflows,
             "callback_errors": self.callback_errors, "last_error": self.last_error,
+            # Converted blocks that were not ready in time (sent as a fade to
+            # silence), and whether the voice process has died.
+            "late_blocks": getattr(getattr(self, "callbacks", None), "late_blocks", 0),
+            "voice_failed": bool(getattr(getattr(self, "callbacks", None), "voice_failed", False)),
         }
 
     def get_input_audio_device(self, index: int):
@@ -288,6 +292,8 @@ class Audio:
                 * self.output_audio_gain
             )
         except Exception as error:
+            # Whatever the driver's buffer held would otherwise play again.
+            outdata.fill(0)
             self.callback_errors = getattr(self, "callback_errors", 0) + 1
             self.last_error = f"{type(error).__name__}: {error}"
             print(f"An error occurred while running the audio stream: {error}")
@@ -316,6 +322,7 @@ class Audio:
                 np.repeat(mon_wav, output_channels).reshape(-1, output_channels) * gain
             )
         except Exception as error:
+            outdata.fill(0)
             print(f"An error occurred while running the audio queue: {error}")
             print(traceback.format_exc())
 

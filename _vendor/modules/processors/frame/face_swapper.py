@@ -640,17 +640,30 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, 
 
 
 def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
-    """Optimized face swapping with better memory management and performance."""
+    """Optimized face swapping with better memory management and performance.
+
+    Returns ``temp_frame`` unchanged when nothing could be swapped.
+    """
+    swapped = try_swap_face(source_face, target_face, temp_frame)
+    return temp_frame if swapped is None else swapped
+
+
+def try_swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Optional[Frame]:
+    """Like swap_face(), but None when no swapped face was pasted.
+
+    The live pipeline uses this to never send the camera's real face on a
+    failure (see live.FramePipeline).
+    """
     face_swapper = get_face_swapper()
     if face_swapper is None:
         update_status("Face swapper model not loaded or failed to load. Skipping swap.", NAME)
-        return temp_frame
+        return None
 
     # Safety check for faces
     if source_face is None or target_face is None:
-        return temp_frame
+        return None
     if not hasattr(source_face, 'normed_embedding') or source_face.normed_embedding is None:
-        return temp_frame
+        return None
 
     frame = temp_frame
     if frame.dtype != np.uint8:
@@ -672,10 +685,10 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
             )
     except Exception as e:
         print(f"Error during face swap: {e}")
-        return temp_frame
+        return None
 
     if not isinstance(bgr_fake, np.ndarray):
-        return temp_frame
+        return None
     return paste_swapped_face(temp_frame, bgr_fake, M, target_face)
 
 
@@ -825,13 +838,19 @@ class AsyncLiveSwapper:
 
         Returns ``temp_frame`` unchanged until a first result is ready.
         """
+        swapped = self.try_swap(source_face, target_face, temp_frame)
+        return temp_frame if swapped is None else swapped
+
+    def try_swap(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Optional[Frame]:
+        """Like swap(), but None when no result was pasted (none ready yet,
+        or it was made for another source or face)."""
         # The model thread loads the model; until it has, frames pass through
         # rather than this call waiting for it.
         face_swapper = FACE_SWAPPER
         if face_swapper is None or source_face is None or target_face is None:
-            return temp_frame
+            return None
         if getattr(source_face, "normed_embedding", None) is None:
-            return temp_frame
+            return None
 
         # Match swap_face(): norm_crop2()/warpAffine expects an 8-bit,
         # contiguous frame, and the caller may hand us a view.
@@ -846,7 +865,7 @@ class AsyncLiveSwapper:
             aimg, M = face_align.norm_crop2(frame, kps, face_swapper.input_size[0])
         except Exception as e:
             print(f"Error during face swap: {e}")
-            return frame
+            return None
 
         if self._is_new_target(kps):
             self.clear()
@@ -857,7 +876,7 @@ class AsyncLiveSwapper:
 
         # A result made for a previous source image must not be pasted.
         if result is None or result[0] is not source_face:
-            return frame
+            return None
         return paste_swapped_face(frame, result[1], M, target_face)
 
     def clear(self) -> None:
