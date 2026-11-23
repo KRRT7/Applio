@@ -110,9 +110,6 @@ def build_app():
     # detect gradio
     GRADIO_6 = int(gr.__version__.split(".")[0]) >= 6
 
-    # Zluda hijack
-    import rvc.lib.zluda
-
     # Import Tabs
     from assets.app_shell import build_workspace, create_theme, stylesheet
     from tabs.settings.settings import settings_tab
@@ -208,6 +205,11 @@ def launch_gradio(Applio, server_name: str, server_port: int) -> None:
 
     if client_mode:
         import time
+
+        # Client mode runs voice conversion in this process (the UI-only
+        # process otherwise never imports torch), so it needs the AMD /
+        # ZLUDA torch fixes here.
+        import rvc.lib.zluda  # noqa: F401
         from rvc.realtime.client import app as fastapi_app
 
         app.mount("/api", fastapi_app)

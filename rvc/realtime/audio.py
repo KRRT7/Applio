@@ -11,7 +11,7 @@ now_dir = os.getcwd()
 sys.path.append(now_dir)
 
 from rvc.lib import win_rt
-from rvc.realtime.core import AUDIO_SAMPLE_RATE
+from rvc.realtime.constants import AUDIO_SAMPLE_RATE
 
 
 def queue_latest(queue, audio):

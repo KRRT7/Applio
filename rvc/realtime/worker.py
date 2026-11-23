@@ -7,7 +7,9 @@ from queue import Empty, Full
 now_dir = os.getcwd()
 sys.path.append(now_dir)
 
-from rvc.realtime.core import VoiceChanger, AUDIO_SAMPLE_RATE
+# The voice model (and torch) load only in the worker process: the parent
+# side of this module runs in the UI process, which stays torch-free.
+from rvc.realtime.constants import AUDIO_SAMPLE_RATE
 
 
 def _worker_loop(vc_kwargs, input_q, output_q, config_q, stop_evt, ready_evt):
@@ -22,6 +24,7 @@ def _worker_loop(vc_kwargs, input_q, output_q, config_q, stop_evt, ready_evt):
     # AMD / ZLUDA torch fixes. This process used to pick them up by re-running
     # app.py on spawn, which no longer builds anything outside its main().
     import rvc.lib.zluda  # noqa: F401
+    from rvc.realtime.core import VoiceChanger
 
     try:
         vc = VoiceChanger(**vc_kwargs)
@@ -70,7 +73,7 @@ def _worker_loop(vc_kwargs, input_q, output_q, config_q, stop_evt, ready_evt):
             pass
 
 
-def _apply_config(vc: VoiceChanger, cfg):
+def _apply_config(vc: "VoiceChanger", cfg):
     """Apply a configuration update to the VoiceChanger in the worker process."""
     if "record_start" in cfg:
         vc.record_audio = True

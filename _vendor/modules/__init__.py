@@ -1,6 +1,18 @@
 import os
+import sys
+
 import cv2
 import numpy as np
+
+# insightface imports insightface.app.mask_renderer (unused here), which imports
+# albumentations, which imports its optional albumentations.pytorch, i.e. torch,
+# whenever torch is installed. The UI process runs face swap on ONNX Runtime
+# alone and keeps torch out (~0.3 GB of RAM); albumentations skips the
+# submodule on ImportError, which a None entry raises. Left alone if torch's
+# side was already imported.
+sys.modules.setdefault("albumentations.pytorch", None)
+# albumentations also queries PyPI for a newer version on every import.
+os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 
 # Utility function to support unicode characters in file paths for reading.
@@ -36,3 +48,29 @@ def imwrite_unicode(path, img, params=None):
         return True
     except Exception:
         return False
+
+
+# ONNX Runtime's CUDA provider needs the CUDA / cuDNN DLLs loaded first.
+# Importing torch used to do that as a side effect; the UI process no longer
+# imports torch (its CUDA runtime cost ~0.3 GB of RAM there), so load them
+# explicitly. preload_dlls() finds torch's bundled DLLs (torch/lib) from its
+# package metadata without importing it, then falls back to nvidia-* wheels
+# and the default search path. Nothing to do when torch is already loaded.
+def _preload_cuda_dlls():
+    import sys
+
+    if "torch" in sys.modules:
+        return
+    try:
+        import onnxruntime
+
+        if (
+            hasattr(onnxruntime, "preload_dlls")
+            and "CUDAExecutionProvider" in onnxruntime.get_available_providers()
+        ):
+            onnxruntime.preload_dlls()
+    except Exception as error:  # the CPU / other providers still work
+        print(f"[DLC] Could not preload the CUDA DLLs: {error}")
+
+
+_preload_cuda_dlls()
