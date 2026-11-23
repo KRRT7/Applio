@@ -141,12 +141,19 @@ def save_settings(values):
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             config = json.load(f)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         config = {}
+    except (OSError, ValueError) as exc:
+        # Never fall back to {} here: that would wipe every other section.
+        print(f"Error saving face swap settings (config unreadable): {exc}")
+        return
     config["faceswap"] = values
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        # Write a temp file and swap it in, so readers never see a half-written file.
+        tmp = f"{CONFIG_PATH}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, CONFIG_PATH)
     except OSError as exc:
         print(f"Error saving face swap settings: {exc}")
 

@@ -1,6 +1,7 @@
 import gradio as gr
 import sounddevice as sd
 import os
+import threading
 import sys
 import time
 import json
@@ -434,8 +435,11 @@ def save_realtime_settings(
             if val is not None:
                 config["realtime"][key] = val
 
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        # Write a temp file and swap it in, so readers never see a half-written file.
+        tmp = f"{CONFIG_PATH}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, CONFIG_PATH)
     except Exception as e:
         print(f"Error saving realtime settings: {e}")
 
