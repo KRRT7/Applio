@@ -329,7 +329,6 @@ class RefineGANGenerator(nn.Module):
         self.downsample_blocks = nn.ModuleList([])
         self.df0 = []
         for i, u in enumerate(upsample_rates):
-
             new_size = int(size / upsample_rates[-i - 1])
             # T dimension factors for torchaudio.functional.resample
             self.df0.append([size, new_size])

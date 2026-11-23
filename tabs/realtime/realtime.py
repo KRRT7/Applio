@@ -145,7 +145,9 @@ def path_choices(paths):
         if counts[name] > 1:
             # A shipped model can share its name with one of the user's own.
             suffix = (
-                "bundled" if is_bundled(path) else os.path.basename(os.path.dirname(path))
+                "bundled"
+                if is_bundled(path)
+                else os.path.basename(os.path.dirname(path))
             )
             name = f"{name} ({suffix})"
         choices.append((name, path))
@@ -374,15 +376,21 @@ def voice_status():
         return i18n("voice on (waiting for audio)")
     # latency_ms is per-block processing time, not end-to-end delay (that is
     # dominated by the chunk size).
-    budget = f"{st['latency_ms']:.0f}/{st['block_ms']:.0f} ms per block" if st["block_ms"] else f"{st['latency_ms']:.0f} ms/block"
-    return " · ".join([
-        "voice on",
-        f"mic {_level(st['input_db'])}",
-        f"out {_level(st['output_db'])}",
-        budget,
-        f"overruns {st['overruns']}",
-        f"dropouts {st['output_underflows']}",
-    ])
+    budget = (
+        f"{st['latency_ms']:.0f}/{st['block_ms']:.0f} ms per block"
+        if st["block_ms"]
+        else f"{st['latency_ms']:.0f} ms/block"
+    )
+    return " · ".join(
+        [
+            "voice on",
+            f"mic {_level(st['input_db'])}",
+            f"out {_level(st['output_db'])}",
+            budget,
+            f"overruns {st['overruns']}",
+            f"dropouts {st['output_underflows']}",
+        ]
+    )
 
 
 callbacks_kwargs = {}
@@ -414,15 +422,15 @@ def save_realtime_settings(
         if input_device is not None:
             config["realtime"][
                 "client_input_device" if client_mode else "input_device"
-            ] = (input_device or "")
+            ] = input_device or ""
         if output_device is not None:
             config["realtime"][
                 "client_output_device" if client_mode else "output_device"
-            ] = (output_device or "")
+            ] = output_device or ""
         if monitor_device is not None:
             config["realtime"][
                 "client_monitor_device" if client_mode else "monitor_device"
-            ] = (monitor_device or "")
+            ] = monitor_device or ""
         if model_file is not None:
             config["realtime"]["model_file"] = model_file or ""
         if index_file is not None:
@@ -955,11 +963,11 @@ def get_audio_devices_formatted():
         )
 
         input_device_list = {
-            f"{input_sorted.index(d)+1}: {d.name} ({d.host_api})": d.index
+            f"{input_sorted.index(d) + 1}: {d.name} ({d.host_api})": d.index
             for d in input_sorted
         }
         output_device_list = {
-            f"{output_sorted.index(d)+1}: {d.name} ({d.host_api})": d.index
+            f"{output_sorted.index(d) + 1}: {d.name} ({d.host_api})": d.index
             for d in output_sorted
         }
 
@@ -988,14 +996,22 @@ def auto_setup_devices(save=True):
     try:
         all_in, all_out, default_in, default_out = audio_setup.query()
     except Exception as exc:
-        return None, None, None, [f"Could not list audio devices: {exc}"], list(inputs), list(outputs)
+        return (
+            None,
+            None,
+            None,
+            [f"Could not list audio devices: {exc}"],
+            list(inputs),
+            list(outputs),
+        )
     setup = audio_setup.pick(all_in, all_out, default_in, default_out)
     in_label = audio_setup.label_for(setup.input, inputs)
     out_label = audio_setup.label_for(setup.output, outputs)
     mon_label = audio_setup.label_for(setup.monitor, outputs)
     if save and (in_label or out_label):
         save_realtime_settings(
-            input_device=in_label or "", output_device=out_label or "",
+            input_device=in_label or "",
+            output_device=out_label or "",
             monitor_device=mon_label or "",
         )
     return in_label, out_label, mon_label, setup.notes, list(inputs), list(outputs)
@@ -1095,15 +1111,18 @@ def realtime_tab(embedded=False):
 
     if not client_mode:
         input_devices, output_devices = get_audio_devices_formatted()
-        input_devices, output_devices = list(input_devices.keys()), list(
-            output_devices.keys()
+        input_devices, output_devices = (
+            list(input_devices.keys()),
+            list(output_devices.keys()),
         )
         if not saved_settings["input_device"] and not saved_settings["output_device"]:
             # First run: route mic -> virtual cable, monitor on the speakers.
             in_label, out_label, mon_label, notes, _, _ = auto_setup_devices(save=True)
-            print(f"[Realtime] Auto audio setup: in={in_label} out={out_label} "
-                  f"monitor device={mon_label} (off until Use Monitor Device is ticked)"
-                  + (f" ({'; '.join(notes)})" if notes else ""))
+            print(
+                f"[Realtime] Auto audio setup: in={in_label} out={out_label} "
+                f"monitor device={mon_label} (off until Use Monitor Device is ticked)"
+                + (f" ({'; '.join(notes)})" if notes else "")
+            )
             saved_settings = load_realtime_settings()
     else:
         input_devices = (
@@ -1120,7 +1139,12 @@ def realtime_tab(embedded=False):
     # Load saved settings
 
     with gr.Blocks() as ui:
-        with step_card(1, "Audio Devices", i18n, description="Choose input, output and optional monitor devices for live voice."):
+        with step_card(
+            1,
+            "Audio Devices",
+            i18n,
+            description="Choose input, output and optional monitor devices for live voice.",
+        ):
             with gr.Row():
                 refresh_devices_button = gr.Button(i18n("Refresh Audio Devices"))
                 auto_setup_button = gr.Button(
@@ -1263,9 +1287,7 @@ def realtime_tab(embedded=False):
                         info=i18n(
                             "The path where the output audio will be saved, by default in assets/audios/output.wav"
                         ),
-                        value=os.path.join(
-                            now_dir, "assets", "audios", "output.wav"
-                        ),
+                        value=os.path.join(now_dir, "assets", "audios", "output.wav"),
                         interactive=True,
                     )
                 export_format = gr.Dropdown(
@@ -1298,7 +1320,12 @@ def realtime_tab(embedded=False):
                     value=saved_settings.get("vad_enabled", True),
                     interactive=True,
                 )
-        with step_card(2, "Voice Model", i18n, description="Select the voice model and index used for realtime conversion."):
+        with step_card(
+            2,
+            "Voice Model",
+            i18n,
+            description="Select the voice model and index used for realtime conversion.",
+        ):
             with gr.Row():
                 model_choices = (
                     sorted(names, key=extract_model_and_epoch) if names else []
@@ -1327,7 +1354,12 @@ def realtime_tab(embedded=False):
             with gr.Row():
                 unload_button = gr.Button(i18n("Unload Voice"))
                 refresh_button = gr.Button(i18n("Refresh models and indexes"))
-        with step_card(3, "Conversion Parameters", i18n, description="Tune pitch, voice matching and pitch algorithms."):
+        with step_card(
+            3,
+            "Conversion Parameters",
+            i18n,
+            description="Tune pitch, voice matching and pitch algorithms.",
+        ):
             pitch = gr.Slider(
                 minimum=-24,
                 maximum=24,
@@ -1385,7 +1417,8 @@ def realtime_tab(embedded=False):
                         choices=["rmvpe", "fcpe", "crepe", "swift"],
                         value=(
                             saved_settings["f0_method"]
-                            if saved_settings["f0_method"] in ("rmvpe", "fcpe", "crepe", "swift")
+                            if saved_settings["f0_method"]
+                            in ("rmvpe", "fcpe", "crepe", "swift")
                             else "fcpe"
                         ),
                         label=i18n("Pitch extraction algorithm"),
@@ -1510,7 +1543,12 @@ def realtime_tab(embedded=False):
                         value=1.0,
                         interactive=True,
                     )
-        with step_card(4, "Performance Settings", i18n, description="Balance latency, CPU usage and silence detection."):
+        with step_card(
+            4,
+            "Performance Settings",
+            i18n,
+            description="Balance latency, CPU usage and silence detection.",
+        ):
             with gr.Accordion(i18n("Advanced Settings"), open=False):
                 with gr.Accordion(i18n("Buffer & Latency"), open=True):
                     chunk_size = gr.Slider(
@@ -1564,11 +1602,15 @@ def realtime_tab(embedded=False):
         with (
             gr.Column(visible=False)
             if hide_controls
-            else step_card(5, "Start Realtime", i18n, description="Start or stop the live session.")
+            else step_card(
+                5, "Start Realtime", i18n, description="Start or stop the live session."
+            )
         ):
             terms_checkbox = gr.Checkbox(value=True, visible=False)
             with gr.Row():
-                start_button = gr.Button(i18n("Start"), variant="primary", visible=not hide_controls)
+                start_button = gr.Button(
+                    i18n("Start"), variant="primary", visible=not hide_controls
+                )
                 stop_button = gr.Button(i18n("Stop"), interactive=False, visible=False)
             latency_info = gr.Label(
                 label=i18n("Status"),
@@ -1640,8 +1682,9 @@ def realtime_tab(embedded=False):
             sd._initialize()
 
             input_choices, output_choices = get_audio_devices_formatted()
-            input_choices, output_choices = list(input_choices.keys()), list(
-                output_choices.keys()
+            input_choices, output_choices = (
+                list(input_choices.keys()),
+                list(output_choices.keys()),
             )
             return (
                 gr.update(choices=input_choices),
@@ -1702,14 +1745,24 @@ def realtime_tab(embedded=False):
                 if in_label or out_label:
                     gr.Info(i18n("Audio devices set up."))
                 return (
-                    gr.update(choices=ins, value=in_label) if in_label else gr.update(choices=ins),
-                    gr.update(choices=outs, value=out_label) if out_label else gr.update(choices=outs),
-                    gr.update(choices=outs, value=mon_label) if mon_label else gr.update(choices=outs),
+                    gr.update(choices=ins, value=in_label)
+                    if in_label
+                    else gr.update(choices=ins),
+                    gr.update(choices=outs, value=out_label)
+                    if out_label
+                    else gr.update(choices=outs),
+                    gr.update(choices=outs, value=mon_label)
+                    if mon_label
+                    else gr.update(choices=outs),
                 )
 
             auto_setup_button.click(
                 fn=auto_setup_click,
-                outputs=[input_audio_device, output_audio_device, monitor_output_device],
+                outputs=[
+                    input_audio_device,
+                    output_audio_device,
+                    monitor_output_device,
+                ],
             )
             use_monitor_device.change(
                 fn=lambda v: save_realtime_settings(use_monitor_device=bool(v)),
@@ -1749,7 +1802,6 @@ def realtime_tab(embedded=False):
         def update_visibility(checkbox, count):
             return [gr.update(visible=checkbox) for _ in range(count)]
 
-
         def formant_visible(checkbox):
             return update_visibility(checkbox, 2)
 
@@ -1758,7 +1810,6 @@ def realtime_tab(embedded=False):
             inputs=[formant_shifting],
             outputs=[formant_qfrency, formant_timbre],
         )
-
 
         if client_mode:
 
@@ -1887,42 +1938,42 @@ def realtime_tab(embedded=False):
             )
         else:
             start_inputs = [
-                    terms_checkbox,
-                    input_audio_device,
-                    input_audio_gain,
-                    input_asio_channels,
-                    output_audio_device,
-                    output_audio_gain,
-                    output_asio_channels,
-                    asio_output_stereo,
-                    monitor_output_device,
-                    monitor_audio_gain,
-                    monitor_asio_channels,
-                    use_monitor_device,
-                    exclusive_mode,
-                    vad_enabled,
-                    chunk_size,
-                    cross_fade_overlap_size,
-                    extra_convert_size,
-                    silent_threshold,
-                    pitch,
-                    index_rate,
-                    volume_envelope,
-                    protect,
-                    f0_method,
-                    model_file,
-                    index_file,
-                    sid,
-                    autotune,
-                    autotune_strength,
-                    proposed_pitch,
-                    proposed_pitch_threshold,
-                    embedder_model,
-                    embedder_model_custom,
-                    formant_shifting,
-                    formant_qfrency,
-                    formant_timbre,
-                ]
+                terms_checkbox,
+                input_audio_device,
+                input_audio_gain,
+                input_asio_channels,
+                output_audio_device,
+                output_audio_gain,
+                output_asio_channels,
+                asio_output_stereo,
+                monitor_output_device,
+                monitor_audio_gain,
+                monitor_asio_channels,
+                use_monitor_device,
+                exclusive_mode,
+                vad_enabled,
+                chunk_size,
+                cross_fade_overlap_size,
+                extra_convert_size,
+                silent_threshold,
+                pitch,
+                index_rate,
+                volume_envelope,
+                protect,
+                f0_method,
+                model_file,
+                index_file,
+                sid,
+                autotune,
+                autotune_strength,
+                proposed_pitch,
+                proposed_pitch_threshold,
+                embedder_model,
+                embedder_model_custom,
+                formant_shifting,
+                formant_qfrency,
+                formant_timbre,
+            ]
             start_button.click(
                 fn=_realtime_with_toast,
                 inputs=start_inputs,
@@ -1940,15 +1991,21 @@ def realtime_tab(embedded=False):
                 timing_inputs=[chunk_size, cross_fade_overlap_size],
                 # The per-person voice settings a Live profile saves/loads.
                 profile_inputs={
-                    "model_file": model_file, "index_file": index_file, "pitch": pitch,
-                    "index_rate": index_rate, "protect": protect, "f0_method": f0_method,
+                    "model_file": model_file,
+                    "index_file": index_file,
+                    "pitch": pitch,
+                    "index_rate": index_rate,
+                    "protect": protect,
+                    "f0_method": f0_method,
                 },
                 list_models=lambda: sorted(get_files("model")),
                 list_indexes=lambda: sorted(get_files("index")),
                 # For the Live page's audio panel.
                 devices={
-                    "input": input_audio_device, "output": output_audio_device,
-                    "monitor": monitor_output_device, "use_monitor": use_monitor_device,
+                    "input": input_audio_device,
+                    "output": output_audio_device,
+                    "monitor": monitor_output_device,
+                    "use_monitor": use_monitor_device,
                 },
                 auto_setup=auto_setup_devices,
                 device_labels=get_audio_devices_formatted,
@@ -2074,8 +2131,9 @@ def realtime_tab(embedded=False):
                 new_names = get_files("model")
                 new_indexes = sorted(get_files("index"))
                 input_choices, output_choices = get_audio_devices_formatted()
-                input_choices, output_choices = list(input_choices.keys()), list(
-                    output_choices.keys()
+                input_choices, output_choices = (
+                    list(input_choices.keys()),
+                    list(output_choices.keys()),
                 )
                 return (
                     gr.update(
@@ -2427,4 +2485,3 @@ def realtime_tab(embedded=False):
             inputs=[formant_timbre],
             outputs=[],
         )
-

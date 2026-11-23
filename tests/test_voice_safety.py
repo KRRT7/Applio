@@ -4,6 +4,7 @@ The converted voice must never stutter (replay a block), click, loop or go
 quiet without the operator being told. The worker process is faked here;
 no model or audio device is used.
 """
+
 import numpy as np
 import pytest
 
@@ -70,14 +71,18 @@ def test_a_late_block_fades_to_silence_instead_of_replaying():
     cb = _callbacks()
     first, late = _play(cb, (_block(0.5), 0), None)
     assert np.all(first == 0.5)
-    assert late[0] == pytest.approx(0.5) and late[FADE - 1] < 0.01   # ramps down from the last sample
-    assert np.all(late[FADE:] == 0)                                   # then silence, not the old block
+    assert (
+        late[0] == pytest.approx(0.5) and late[FADE - 1] < 0.01
+    )  # ramps down from the last sample
+    assert np.all(late[FADE:] == 0)  # then silence, not the old block
     assert cb.late_blocks == 1
 
 
 def test_audio_resumes_with_a_fade_in_after_a_gap():
     cb = _callbacks()
-    _, _, resumed, steady = _play(cb, (_block(0.5), 0), None, (_block(0.5), 0), (_block(0.5), 0))
+    _, _, resumed, steady = _play(
+        cb, (_block(0.5), 0), None, (_block(0.5), 0), (_block(0.5), 0)
+    )
     assert resumed[0] == 0 and resumed[FADE // 2] == pytest.approx(0.25, abs=0.01)
     assert np.all(resumed[FADE:] == 0.5)
     assert np.all(steady == 0.5)  # no fade once audio is flowing
@@ -96,27 +101,37 @@ def test_a_dead_worker_means_silence_and_a_flag_never_a_loop():
     submitted = cb.vc.submitted
     outs = _play(cb, (_block(0.9), 0), (_block(0.9), 0))
     assert cb.voice_failed
-    assert cb.vc.submitted == submitted          # nothing sent to the dead process
+    assert cb.vc.submitted == submitted  # nothing sent to the dead process
     assert np.all(outs[0][FADE:] == 0) and np.all(outs[1] == 0)
 
 
 def test_nothing_ready_before_the_first_block_is_plain_silence():
     cb = _callbacks()
     (out,) = _play(cb, None)
-    assert np.all(out == 0) and cb.late_blocks == 0  # still loading: not counted as late
+    assert (
+        np.all(out == 0) and cb.late_blocks == 0
+    )  # still loading: not counted as late
 
 
 # ─── silence gate hangover ────────────────────────────────────────────────
 
 
 def test_hangover_is_about_300_ms_of_blocks():
-    assert speech_hangover_blocks(4000) == 1    # 250 ms blocks
-    assert speech_hangover_blocks(1600) == 3    # 100 ms blocks
-    assert speech_hangover_blocks(16000) == 1   # never zero
+    assert speech_hangover_blocks(4000) == 1  # 250 ms blocks
+    assert speech_hangover_blocks(1600) == 3  # 100 ms blocks
+    assert speech_hangover_blocks(16000) == 1  # never zero
 
 
 def test_gate_stays_open_through_a_short_dip_and_closes_after_the_hangover():
-    verdicts = [False, True, False, True, True, True, False]  # True = detector says silence
+    verdicts = [
+        False,
+        True,
+        False,
+        True,
+        True,
+        True,
+        False,
+    ]  # True = detector says silence
     hold, out = 0, []
     for silent in verdicts:
         is_silence, hold = gate_with_hangover(silent, hold, hangover_blocks=2)

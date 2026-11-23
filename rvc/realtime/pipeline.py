@@ -403,8 +403,7 @@ class Realtime_Pipeline:
         # quantizing f0 to 255 buckets to make coarse f0
         f0_mel = 1127.0 * torch.log(1.0 + f0 / 700.0)
         f0_mel = torch.clip(
-            (f0_mel - self.f0_mel_min) * 254 / (self.f0_mel_max - self.f0_mel_min)
-            + 1,
+            (f0_mel - self.f0_mel_min) * 254 / (self.f0_mel_max - self.f0_mel_min) + 1,
             1,
             255,
             out=f0_mel,

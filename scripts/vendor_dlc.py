@@ -79,11 +79,22 @@ BASE_BRANCH = "base"
 PATCHED_BRANCH = "applio"
 
 # Commits the script makes itself; patches keep their own authors.
-GIT_IDENTITY = ("-c", "user.name=Applio vendor_dlc", "-c", "user.email=vendor-dlc@invalid", "-c", "core.autocrlf=false")
+GIT_IDENTITY = (
+    "-c",
+    "user.name=Applio vendor_dlc",
+    "-c",
+    "user.email=vendor-dlc@invalid",
+    "-c",
+    "core.autocrlf=false",
+)
 
 _IMPORT_PACKAGE = re.compile(r"^(?P<indent>[ \t]*)import modules[ \t]*(?:#.*)?$")
-_IMPORT_SUBMODULE = re.compile(r"^(?P<indent>[ \t]*)import modules\.(?P<name>[\w.]+)[ \t]*(?:#.*)?$")
-_FROM_IMPORT = re.compile(r"^(?P<lead>[ \t]*from[ \t]+)modules(?P<rest>(?:\.[\w.]+)?[ \t]+import\b)")
+_IMPORT_SUBMODULE = re.compile(
+    r"^(?P<indent>[ \t]*)import modules\.(?P<name>[\w.]+)[ \t]*(?:#.*)?$"
+)
+_FROM_IMPORT = re.compile(
+    r"^(?P<lead>[ \t]*from[ \t]+)modules(?P<rest>(?:\.[\w.]+)?[ \t]+import\b)"
+)
 
 
 class PatchError(RuntimeError):
@@ -104,7 +115,7 @@ def rewrite_imports(text: str) -> str:
     bound = set()  # indentation levels where ``modules`` is already imported
     for line in text.splitlines(keepends=True):
         body = line.rstrip("\r\n")
-        newline = line[len(body):]
+        newline = line[len(body) :]
         match = _IMPORT_PACKAGE.match(body)
         if match:
             indent = match["indent"]
@@ -116,7 +127,9 @@ def rewrite_imports(text: str) -> str:
             indent, name = match["indent"], match["name"]
             if indent not in bound:
                 bound.add(indent)
-                out.append(f"{indent}from _vendor import modules  # noqa: F401{newline}")
+                out.append(
+                    f"{indent}from _vendor import modules  # noqa: F401{newline}"
+                )
                 # After a blank line (the start of an import group), the
                 # namespace import gets its own group, as the original
                 # vendoring of this code laid it out.
@@ -159,7 +172,13 @@ def _remove_tree(path: Path) -> None:
 def resolve_commit() -> str:
     """Upstream's current commit, without fetching anything."""
     output = subprocess.run(
-        ["git", "ls-remote", "--exit-code", UPSTREAM_REPOSITORY, f"refs/heads/{UPSTREAM_BRANCH}"],
+        [
+            "git",
+            "ls-remote",
+            "--exit-code",
+            UPSTREAM_REPOSITORY,
+            f"refs/heads/{UPSTREAM_BRANCH}",
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -180,7 +199,9 @@ def move_under_vendor(checkout: Path) -> None:
         if (checkout / "_vendor" / "modules" / name).exists():
             _git("rm", "--quiet", "-f", f"_vendor/modules/{name}", cwd=checkout)
     (checkout / "_vendor" / "deep_live_cam").mkdir()
-    shutil.copyfile(checkout / "LICENSE", checkout / "_vendor" / "deep_live_cam" / "LICENSE")
+    shutil.copyfile(
+        checkout / "LICENSE", checkout / "_vendor" / "deep_live_cam" / "LICENSE"
+    )
     for path in (checkout / "_vendor").rglob("*"):
         if not path.is_file():
             continue
@@ -209,7 +230,9 @@ def generate(commit: str, checkout: Path) -> None:
     _git("init", "--quiet", cwd=checkout)
     # No line-ending conversion in either direction (see move_under_vendor).
     (checkout / ".git" / "info").mkdir(parents=True, exist_ok=True)
-    (checkout / ".git" / "info" / "attributes").write_text("* -text\n", encoding="ascii")
+    (checkout / ".git" / "info" / "attributes").write_text(
+        "* -text\n", encoding="ascii"
+    )
     _git("fetch", "--quiet", "--depth", "1", UPSTREAM_REPOSITORY, commit, cwd=checkout)
     _git("checkout", "--quiet", "-b", UPSTREAM_BRANCH_NAME, "FETCH_HEAD", cwd=checkout)
 
@@ -236,7 +259,11 @@ def copy_out(checkout: Path, destination: Path) -> None:
         target = destination / tree
         if target.exists():
             _remove_tree(target)
-        shutil.copytree(checkout / tree, target, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        shutil.copytree(
+            checkout / tree,
+            target,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
 
 
 def sync(commit: str | None) -> None:
@@ -258,7 +285,11 @@ def _repository_files() -> set[Path]:
         capture_output=True,
         text=True,
     ).stdout
-    return {Path(name) for name in output.split("\0") if name and (REPO_ROOT / name).is_file()}
+    return {
+        Path(name)
+        for name in output.split("\0")
+        if name and (REPO_ROOT / name).is_file()
+    }
 
 
 def _generated_files(root: Path) -> set[Path]:
@@ -351,8 +382,12 @@ def export() -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    sync_parser = commands.add_parser("sync", help="regenerate _vendor/modules and _vendor/deep_live_cam")
-    sync_parser.add_argument("--commit", help="Deep-Live-Cam commit (default: latest main)")
+    sync_parser = commands.add_parser(
+        "sync", help="regenerate _vendor/modules and _vendor/deep_live_cam"
+    )
+    sync_parser.add_argument(
+        "--commit", help="Deep-Live-Cam commit (default: latest main)"
+    )
     commands.add_parser("check", help="fail if the committed trees are stale")
     commands.add_parser("export", help="write build/dlc's commits as patches")
     args = parser.parse_args(argv)

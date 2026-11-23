@@ -9,19 +9,30 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("vendor_dlc", ROOT / "scripts" / "vendor_dlc.py")
+spec = importlib.util.spec_from_file_location(
+    "vendor_dlc", ROOT / "scripts" / "vendor_dlc.py"
+)
 vendor_dlc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vendor_dlc)
 rewrite = vendor_dlc.rewrite_imports
 
-NOTE = "  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.{}`)"
+NOTE = (
+    "  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.{}`)"
+)
 
 
 def test_from_imports_move_under_vendor():
-    assert rewrite("from modules import imread_unicode\n") == "from _vendor.modules import imread_unicode\n"
-    assert rewrite("from modules.core import update_status\n") == "from _vendor.modules.core import update_status\n"
+    assert (
+        rewrite("from modules import imread_unicode\n")
+        == "from _vendor.modules import imread_unicode\n"
+    )
+    assert (
+        rewrite("from modules.core import update_status\n")
+        == "from _vendor.modules.core import update_status\n"
+    )
     assert rewrite("    from modules.processors.frame.core import x\n") == (
-        "    from _vendor.modules.processors.frame.core import x\n")
+        "    from _vendor.modules.processors.frame.core import x\n"
+    )
 
 
 def test_import_modules_binds_the_same_name():
@@ -33,9 +44,12 @@ def test_submodule_import_binds_modules_once_and_loads_the_submodule():
     assert rewrite(src) == (
         "import cv2\n"
         "from _vendor import modules  # noqa: F401\n"
-        "import _vendor.modules.globals as _modules_globals" + NOTE.format("globals") + "\n"
+        "import _vendor.modules.globals as _modules_globals"
+        + NOTE.format("globals")
+        + "\n"
         "import _vendor.modules.processors.frame.core as _modules_frame_core"
-        + NOTE.format("processors.frame.core") + "\n"
+        + NOTE.format("processors.frame.core")
+        + "\n"
     )
 
 
@@ -75,7 +89,11 @@ def test_check_ignores_crlf_from_a_windows_checkout(tmp_path):
 def test_patch_series_is_applied_in_name_order(tmp_path):
     for name in ("0010-b.patch", "0002-a.patch", "notes.txt", "0001-c.patch"):
         (tmp_path / name).write_text("")
-    assert [p.name for p in vendor_dlc.find_patches(tmp_path)] == ["0001-c.patch", "0002-a.patch", "0010-b.patch"]
+    assert [p.name for p in vendor_dlc.find_patches(tmp_path)] == [
+        "0001-c.patch",
+        "0002-a.patch",
+        "0010-b.patch",
+    ]
 
 
 def test_the_committed_series_and_pin_exist():
@@ -83,9 +101,14 @@ def test_the_committed_series_and_pin_exist():
     assert len(pin) == 40 and all(c in "0123456789abcdef" for c in pin)
     assert vendor_dlc.find_patches(), "no patches in tools/vendoring/patches/dlc"
     for patch in vendor_dlc.find_patches():
-        assert b"\r\n" not in patch.read_bytes(), f"{patch.name} has CRLF; see .gitattributes"
+        assert b"\r\n" not in patch.read_bytes(), (
+            f"{patch.name} has CRLF; see .gitattributes"
+        )
 
 
-@pytest.mark.skipif(not os.environ.get("APPLIO_NETWORK_TESTS"), reason="needs the network: set APPLIO_NETWORK_TESTS=1")
+@pytest.mark.skipif(
+    not os.environ.get("APPLIO_NETWORK_TESTS"),
+    reason="needs the network: set APPLIO_NETWORK_TESTS=1",
+)
 def test_committed_trees_are_current():
     assert vendor_dlc.check() == 0

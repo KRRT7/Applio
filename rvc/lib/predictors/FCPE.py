@@ -547,9 +547,9 @@ class SelfAttention(nn.Module):
             attn_outs.append(out)
 
         if not empty(lq):
-            assert (
-                not cross_attend
-            ), "local attention is not compatible with cross attention"
+            assert not cross_attend, (
+                "local attention is not compatible with cross attention"
+            )
             out = self.local_attn(lq, lk, lv, input_mask=mask)
             attn_outs.append(out)
 
@@ -865,7 +865,9 @@ class FCPEF0Predictor(F0Predictor):
         content = (
             content[None, None]
             if ndim == 1
-            else content[None] if ndim == 2 else content
+            else content[None]
+            if ndim == 2
+            else content
         )
         assert content.ndim == 3
         is_np = isinstance(content, np.ndarray)

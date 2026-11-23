@@ -61,7 +61,7 @@ class AudioCallbacks:
         # with a short fade-in, so neither edge clicks.
         self._fade = max(1, int(audio_sample_rate * EDGE_FADE_S))
         self._in_gap = False
-        self.late_blocks = 0       # blocks the worker did not deliver in time
+        self.late_blocks = 0  # blocks the worker did not deliver in time
         self.voice_failed = False  # the worker process died; output is silence
 
         vc_kwargs = dict(
@@ -170,7 +170,9 @@ class AudioCallbacks:
         last = self._last_output
         if not self._in_gap and last is not None and len(last):
             k = min(self._fade, n)
-            out[:k] = float(last[-1]) * np.linspace(1.0, 0.0, k, endpoint=False, dtype=np.float32)
+            out[:k] = float(last[-1]) * np.linspace(
+                1.0, 0.0, k, endpoint=False, dtype=np.float32
+            )
         self._in_gap = True
         self._last_vol = 0
         return out
