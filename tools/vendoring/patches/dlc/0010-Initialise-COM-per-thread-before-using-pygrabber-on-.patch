@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 12 Nov 2026 23:58:02 -0500
+Subject: [PATCH] Initialise COM per thread before using pygrabber on Windows
+
+On Windows the vendored camera code lists and opens cameras through
+pygrabber (DirectShow over COM). COM must be initialised on each thread
+that uses it; Applio calls this code from Gradio worker threads, where
+nothing had, so starting Face Swap failed with "[WinError -2147221008]
+CoInitialize has not been called" and the camera list came back empty.
+New wincom.ensure_com() initialises COM once per thread (no-op elsewhere)
+and is called before each FilterGraph(). Verified on Windows 11 from a
+worker thread: cameras listed and opened.
+
+Applio-Commit: bc51ead7218320ba83d5ff22aac9300404fde65a
+---
+ _vendor/modules/cameras.py       |  3 +++
+ _vendor/modules/video_capture.py |  3 +++
+ _vendor/modules/wincom.py        | 28 ++++++++++++++++++++++++++++
+ 3 files changed, 34 insertions(+)
+ create mode 100644 _vendor/modules/wincom.py
+
+diff --git a/_vendor/modules/cameras.py b/_vendor/modules/cameras.py
+index f332781..c110997 100644
+--- a/_vendor/modules/cameras.py
++++ b/_vendor/modules/cameras.py
+@@ -22,6 +22,9 @@ def list_cameras() -> List[Camera]:
+         try:
+             from pygrabber.dshow_graph import FilterGraph
+ 
++            from _vendor.modules.wincom import ensure_com
++
++            ensure_com()  # pygrabber uses COM; may run on a worker thread
+             cams = list(enumerate(FilterGraph().get_input_devices()))
+         except Exception as exc:
+             print(f"Error detecting cameras: {exc}")
+diff --git a/_vendor/modules/video_capture.py b/_vendor/modules/video_capture.py
+index 163805e..30c84ef 100644
+--- a/_vendor/modules/video_capture.py
++++ b/_vendor/modules/video_capture.py
+@@ -25,6 +25,9 @@ class VideoCapturer:
+ 
+         # Initialize Windows-specific components if on Windows
+         if platform.system() == "Windows":
++            from _vendor.modules.wincom import ensure_com
++
++            ensure_com()  # pygrabber uses COM; may run on a worker thread
+             self.graph = FilterGraph()
+             # Verify device exists
+             devices = self.graph.get_input_devices()
+diff --git a/_vendor/modules/wincom.py b/_vendor/modules/wincom.py
+new file mode 100644
+index 0000000..1522e5b
+--- /dev/null
++++ b/_vendor/modules/wincom.py
+@@ -0,0 +1,28 @@
++"""Per-thread COM initialisation for Windows camera code.
++
++pygrabber (DirectShow, used to list and open cameras on Windows) talks to
++COM, which must be initialised on every thread that uses it. Embedding
++apps call the camera code from worker threads (e.g. Gradio handlers),
++where nothing has done that, and pygrabber fails with
++``[WinError -2147221008] CoInitialize has not been called``.
++"""
++
++import platform
++import threading
++
++_STATE = threading.local()
++
++
++def ensure_com() -> None:
++    """Initialise COM for the calling thread once (no-op off Windows)."""
++    if platform.system() != "Windows" or getattr(_STATE, "ready", False):
++        return
++    try:
++        import comtypes
++
++        comtypes.CoInitializeEx(comtypes.COINIT_APARTMENTTHREADED)
++    except OSError:
++        # Already initialised on this thread with another threading model
++        # (RPC_E_CHANGED_MODE): COM is usable, which is all we need.
++        pass
++    _STATE.ready = True

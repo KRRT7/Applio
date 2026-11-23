@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 12 Nov 2026 21:00:00 -0500
+Subject: [PATCH] Let an embedding application choose the models directory
+
+DLC_MODELS_DIR, when set, replaces <checkout>/models; the swapper and
+the enhancers take the directory from modules.paths instead of each
+working it out from its own location (which, vendored, is no longer
+the checkout).
+
+Reconstructed from Deep-Live-Cam branch headless-library at 047c551,
+which Applio vendored on 2026-11-12; that branch was never pushed, so its
+own history is lost.
+---
+ _vendor/modules/paths.py                                  | 3 ++-
+ _vendor/modules/processors/frame/face_enhancer.py         | 4 +---
+ _vendor/modules/processors/frame/face_enhancer_gpen256.py | 4 +---
+ _vendor/modules/processors/frame/face_enhancer_gpen512.py | 4 +---
+ _vendor/modules/processors/frame/face_swapper.py          | 4 +---
+ 5 files changed, 6 insertions(+), 13 deletions(-)
+
+diff --git a/_vendor/modules/paths.py b/_vendor/modules/paths.py
+index 106605d..651adc2 100644
+--- a/_vendor/modules/paths.py
++++ b/_vendor/modules/paths.py
+@@ -3,4 +3,5 @@
+ import os
+ 
+ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+-MODELS_DIR = os.path.join(ROOT_DIR, "models")
++# DLC_MODELS_DIR lets an embedding application keep models elsewhere.
++MODELS_DIR = os.environ.get("DLC_MODELS_DIR") or os.path.join(ROOT_DIR, "models")
+diff --git a/_vendor/modules/processors/frame/face_enhancer.py b/_vendor/modules/processors/frame/face_enhancer.py
+index a6d62a0..d3bc267 100644
+--- a/_vendor/modules/processors/frame/face_enhancer.py
++++ b/_vendor/modules/processors/frame/face_enhancer.py
+@@ -28,9 +28,7 @@ NAME = "DLC.FACE-ENHANCER"
+ MODEL_FILE = "gfpgan-1024.onnx"
+ 
+ abs_dir = os.path.dirname(os.path.abspath(__file__))
+-models_dir = os.path.join(
+-    os.path.dirname(os.path.dirname(os.path.dirname(abs_dir))), "models"
+-)
++from _vendor.modules.paths import MODELS_DIR as models_dir  # noqa: E402
+ 
+ # Standard FFHQ 5-point face template for 512x512 resolution
+ # Points: left_eye, right_eye, nose, left_mouth, right_mouth
+diff --git a/_vendor/modules/processors/frame/face_enhancer_gpen256.py b/_vendor/modules/processors/frame/face_enhancer_gpen256.py
+index f355f41..7fe4cf1 100644
+--- a/_vendor/modules/processors/frame/face_enhancer_gpen256.py
++++ b/_vendor/modules/processors/frame/face_enhancer_gpen256.py
+@@ -31,9 +31,7 @@ ENHANCER = None
+ THREAD_LOCK = threading.Lock()
+ 
+ abs_dir = os.path.dirname(os.path.abspath(__file__))
+-models_dir = os.path.join(
+-    os.path.dirname(os.path.dirname(os.path.dirname(abs_dir))), "models"
+-)
++from _vendor.modules.paths import MODELS_DIR as models_dir  # noqa: E402
+ 
+ 
+ def _obtain_model():
+diff --git a/_vendor/modules/processors/frame/face_enhancer_gpen512.py b/_vendor/modules/processors/frame/face_enhancer_gpen512.py
+index df4eb30..00495e6 100644
+--- a/_vendor/modules/processors/frame/face_enhancer_gpen512.py
++++ b/_vendor/modules/processors/frame/face_enhancer_gpen512.py
+@@ -31,9 +31,7 @@ ENHANCER = None
+ THREAD_LOCK = threading.Lock()
+ 
+ abs_dir = os.path.dirname(os.path.abspath(__file__))
+-models_dir = os.path.join(
+-    os.path.dirname(os.path.dirname(os.path.dirname(abs_dir))), "models"
+-)
++from _vendor.modules.paths import MODELS_DIR as models_dir  # noqa: E402
+ 
+ 
+ def _obtain_model():
+diff --git a/_vendor/modules/processors/frame/face_swapper.py b/_vendor/modules/processors/frame/face_swapper.py
+index b949850..f35ce1a 100644
+--- a/_vendor/modules/processors/frame/face_swapper.py
++++ b/_vendor/modules/processors/frame/face_swapper.py
+@@ -194,9 +194,7 @@ ADAPTIVE_QUALITY = True
+ # --- END: Mac M1-M5 Optimizations ---
+ 
+ abs_dir = os.path.dirname(os.path.abspath(__file__))
+-models_dir = os.path.join(
+-    os.path.dirname(os.path.dirname(os.path.dirname(abs_dir))), "models"
+-)
++from _vendor.modules.paths import MODELS_DIR as models_dir  # noqa: E402
+ 
+ def pre_check() -> bool:
+     # Use models_dir instead of abs_dir to save to the correct location

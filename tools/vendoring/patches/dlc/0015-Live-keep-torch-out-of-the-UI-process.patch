@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <106575910+KRRT7@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 14:26:08 -0800
+Subject: [PATCH] Live: keep torch out of the UI process
+
+Only the voice worker runs torch, but the UI process loaded it too, plus a
+second CUDA runtime next to ONNX Runtime's once face swap started. Idle UI
+process: 649 -> 336 MB RAM, 1.86 -> 1.02 GB committed. During face swap:
+-370 MB RAM, -860 MB committed. Same fps.
+
+- Paste-back blends with cv2 instead of torch CUDA (swap and GFPGAN).
+  The torch path paid an upload and a download per face and was slower
+  at face-crop sizes (RTX 4060: 0.68 vs 0.15 ms at 250 px, 1.24 vs
+  0.43 ms at 400 px); output is identical within 1 level.
+- The fp16 inswapper / CUDA-graph choice asks the configured ONNX
+  Runtime providers instead of torch.cuda. platform_info drops its
+  unused HAS_TORCH_CUDA, which imported torch.
+- _vendor.modules preloads the CUDA/cuDNN DLLs with
+  onnxruntime.preload_dlls() (torch's bundled copies, found without
+  importing torch), and stops albumentations (via insightface) from
+  importing torch. It also disables albumentations' PyPI update check,
+  a network request on every import.
+- AUDIO_SAMPLE_RATE moves to rvc.realtime.constants, so the settings,
+  audio and Live modules no longer import rvc.realtime.core (torch,
+  faiss, scipy, transformers). The worker imports VoiceChanger only in
+  the child process.
+- The Voice tab reads speakers_id with a restricted unpickler
+  (rvc.lib.checkpoint_meta) instead of torch.load: no torch and no
+  weights loaded, and only containers and tensor-rebuild stubs resolve.
+- app.py imports rvc.lib.zluda only in client mode, the one mode that
+  runs voice in this process; the worker imports it itself.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Applio-Commit: c20029b680bec5933024f70a80075ac2778a31c8 (as merged in 9ead3828)
+---
+ _vendor/modules/__init__.py                   | 38 +++++++++++++++
+ _vendor/modules/platform_info.py              | 14 ++----
+ .../modules/processors/frame/face_enhancer.py | 31 ++++--------
+ .../modules/processors/frame/face_swapper.py  | 48 +++++++++----------
+ 4 files changed, 72 insertions(+), 59 deletions(-)
+
+diff --git a/_vendor/modules/__init__.py b/_vendor/modules/__init__.py
+index 29b1ee7..5374164 100644
+--- a/_vendor/modules/__init__.py
++++ b/_vendor/modules/__init__.py
+@@ -1,7 +1,19 @@
+ import os
++import sys
++
+ import cv2
+ import numpy as np
+ 
++# insightface imports insightface.app.mask_renderer (unused here), which imports
++# albumentations, which imports its optional albumentations.pytorch, i.e. torch,
++# whenever torch is installed. The UI process runs face swap on ONNX Runtime
++# alone and keeps torch out (~0.3 GB of RAM); albumentations skips the
++# submodule on ImportError, which a None entry raises. Left alone if torch's
++# side was already imported.
++sys.modules.setdefault("albumentations.pytorch", None)
++# albumentations also queries PyPI for a newer version on every import.
++os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
++
+ 
+ # Utility function to support unicode characters in file paths for reading.
+ # OpenCV's cv2.imread() encodes the path with the locale ANSI code page on
+@@ -36,3 +48,29 @@ def imwrite_unicode(path, img, params=None):
+         return True
+     except Exception:
+         return False
++
++
++# ONNX Runtime's CUDA provider needs the CUDA / cuDNN DLLs loaded first.
++# Importing torch used to do that as a side effect; the UI process no longer
++# imports torch (its CUDA runtime cost ~0.3 GB of RAM there), so load them
++# explicitly. preload_dlls() finds torch's bundled DLLs (torch/lib) from its
++# package metadata without importing it, then falls back to nvidia-* wheels
++# and the default search path. Nothing to do when torch is already loaded.
++def _preload_cuda_dlls():
++    import sys
++
++    if "torch" in sys.modules:
++        return
++    try:
++        import onnxruntime
++
++        if (
++            hasattr(onnxruntime, "preload_dlls")
++            and "CUDAExecutionProvider" in onnxruntime.get_available_providers()
++        ):
++            onnxruntime.preload_dlls()
++    except Exception as error:  # the CPU / other providers still work
++        print(f"[DLC] Could not preload the CUDA DLLs: {error}")
++
++
++_preload_cuda_dlls()
+diff --git a/_vendor/modules/platform_info.py b/_vendor/modules/platform_info.py
+index b52128b..f14734e 100644
+--- a/_vendor/modules/platform_info.py
++++ b/_vendor/modules/platform_info.py
+@@ -1,8 +1,9 @@
+ """Centralized platform + accelerator detection.
+ 
+ Imported once at startup to expose typed flags the rest of the codebase
+-can branch on without re-querying `platform`, `torch.cuda`, or
+-`onnxruntime.get_available_providers()` repeatedly.
++can branch on without re-querying `platform` or
++`onnxruntime.get_available_providers()` repeatedly. It must not import
++torch: the UI process that runs face swap stays torch-free.
+ 
+ The banner printed by :func:`print_banner` is the single user-facing
+ report of which code path the app will take.
+@@ -19,14 +20,6 @@ IS_LINUX: bool = _platform.system() == "Linux"
+ IS_APPLE_SILICON: bool = IS_MACOS and _platform.machine() == "arm64"
+ 
+ 
+-def _detect_torch_cuda() -> bool:
+-    try:
+-        import torch  # noqa: WPS433 — local import, avoid hard dep at module load
+-        return bool(torch.cuda.is_available())
+-    except Exception:
+-        return False
+-
+-
+ def _detect_onnx_providers() -> List[str]:
+     try:
+         import onnxruntime
+@@ -35,7 +28,6 @@ def _detect_onnx_providers() -> List[str]:
+         return []
+ 
+ 
+-HAS_TORCH_CUDA: bool = _detect_torch_cuda()
+ ONNX_PROVIDERS: List[str] = _detect_onnx_providers()
+ HAS_CUDA_PROVIDER: bool = "CUDAExecutionProvider" in ONNX_PROVIDERS
+ HAS_COREML_PROVIDER: bool = "CoreMLExecutionProvider" in ONNX_PROVIDERS
+diff --git a/_vendor/modules/processors/frame/face_enhancer.py b/_vendor/modules/processors/frame/face_enhancer.py
+index 65c2997..05cc163 100644
+--- a/_vendor/modules/processors/frame/face_enhancer.py
++++ b/_vendor/modules/processors/frame/face_enhancer.py
+@@ -157,14 +157,6 @@ def _align_face(
+     return aligned_face, affine_matrix
+ 
+ 
+-_HAS_TORCH_CUDA = False
+-try:
+-    import torch
+-    if torch.cuda.is_available():
+-        _HAS_TORCH_CUDA = True
+-except ImportError:
+-    pass
+-
+ # Cache the feathered mask — it's the same for every call at a given size
+ _enhancer_cache: dict = {'mask': None, 'mask_size': 0}
+ 
+@@ -232,21 +224,14 @@ def _paste_back(
+ 
+     target_crop = frame[y1p:y2p, x1p:x2p]
+ 
+-    if _HAS_TORCH_CUDA:
+-        # Upload uint8 alpha — smaller transfer, scale on device.
+-        mask_t = torch.from_numpy(inv_mask_crop).cuda().float().mul_(1.0 / 255.0).unsqueeze(2)
+-        enhanced_t = torch.from_numpy(inv_restored_crop).float().cuda()
+-        target_t = torch.from_numpy(target_crop).float().cuda()
+-        blended = (mask_t * enhanced_t + (1.0 - mask_t) * target_t
+-                   ).to(torch.uint8).cpu().numpy()
+-        frame[y1p:y2p, x1p:x2p] = blended
+-    else:
+-        # Fused uint8 blend via cv2 SIMD — ~7× faster than the float32 round-trip.
+-        alpha_3c = cv2.merge([inv_mask_crop, inv_mask_crop, inv_mask_crop])
+-        inv_alpha = 255 - alpha_3c
+-        a_enh = cv2.multiply(inv_restored_crop, alpha_3c, scale=1.0 / 255.0)
+-        a_tgt = cv2.multiply(target_crop, inv_alpha, scale=1.0 / 255.0)
+-        frame[y1p:y2p, x1p:x2p] = cv2.add(a_enh, a_tgt)
++    # Fused uint8 blend via cv2 SIMD: faster than a torch CUDA blend at
++    # face-crop sizes (no upload/download) and keeps torch out of the UI
++    # process (see face_swapper._fast_paste_back).
++    alpha_3c = cv2.merge([inv_mask_crop, inv_mask_crop, inv_mask_crop])
++    inv_alpha = 255 - alpha_3c
++    a_enh = cv2.multiply(inv_restored_crop, alpha_3c, scale=1.0 / 255.0)
++    a_tgt = cv2.multiply(target_crop, inv_alpha, scale=1.0 / 255.0)
++    frame[y1p:y2p, x1p:x2p] = cv2.add(a_enh, a_tgt)
+ 
+     return frame
+ 
+diff --git a/_vendor/modules/processors/frame/face_swapper.py b/_vendor/modules/processors/frame/face_swapper.py
+index f4d3490..a400776 100644
+--- a/_vendor/modules/processors/frame/face_swapper.py
++++ b/_vendor/modules/processors/frame/face_swapper.py
+@@ -217,7 +217,7 @@ def pre_check() -> bool:
+         return True
+ 
+     variants = ["inswapper_128.onnx", "inswapper_128_fp16.onnx"]
+-    if _HAS_TORCH_CUDA:
++    if _cuda_selected():
+         variants.reverse()
+     if ensure_any(variants) is None:
+         update_status(
+@@ -370,7 +370,7 @@ def get_face_swapper() -> Any:
+             # older GPUs (e.g. GTX 16xx) where FP16 can produce NaN.
+             fp32_path = os.path.join(models_dir, "inswapper_128.onnx")
+             fp16_path = os.path.join(models_dir, "inswapper_128_fp16.onnx")
+-            use_fp16 = _HAS_TORCH_CUDA and os.path.exists(fp16_path)
++            use_fp16 = _cuda_selected() and os.path.exists(fp16_path)
+             if use_fp16:
+                 model_path = fp16_path
+             elif os.path.exists(fp32_path):
+@@ -397,7 +397,7 @@ def get_face_swapper() -> Any:
+                     providers=providers_config,
+                 )
+                 # Set up CUDA graph session for faster inference
+-                if _HAS_TORCH_CUDA and any(
++                if any(
+                     p == "CUDAExecutionProvider" or
+                     (isinstance(p, tuple) and p[0] == "CUDAExecutionProvider")
+                     for p in providers_config
+@@ -412,13 +412,17 @@ def get_face_swapper() -> Any:
+     return FACE_SWAPPER
+ 
+ 
+-_HAS_TORCH_CUDA = False
+-try:
+-    import torch
+-    if torch.cuda.is_available():
+-        _HAS_TORCH_CUDA = True
+-except ImportError:
+-    pass
++def _cuda_selected() -> bool:
++    """Whether ONNX Runtime runs on CUDA (picks the fp16 inswapper).
++
++    Asks the configured providers rather than torch: importing torch here
++    put a second CUDA runtime (~0.3 GB of RAM) into the UI process, which
++    otherwise only needs ONNX Runtime.
++    """
++    return any(
++        (p[0] if isinstance(p, tuple) else p) == "CUDAExecutionProvider"
++        for p in modules.globals.execution_providers
++    )
+ 
+ # Cache for paste-back: feathered alpha templates in aligned-face space,
+ # keyed by (size, shape).
+@@ -622,21 +626,15 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray,
+ 
+     target_crop = target_img[y1p:y2p, x1p:x2p]
+ 
+-    if _HAS_TORCH_CUDA:
+-        # Scale alpha to [0, 1] on device — cheaper to upload uint8 than float.
+-        mask_t = torch.from_numpy(alpha_crop).cuda().float().mul_(1.0 / 255.0).unsqueeze(2)
+-        fake_t = torch.from_numpy(bgr_fake_crop).float().cuda()
+-        tgt_t = torch.from_numpy(target_crop).float().cuda()
+-        blended = (mask_t * fake_t + (1.0 - mask_t) * tgt_t).to(torch.uint8).cpu().numpy()
+-        target_img[y1p:y2p, x1p:x2p] = blended
+-    else:
+-        # Fused uint8 blend via cv2 SIMD — no float32 round-trip.
+-        # Measured ~7-8× faster than the old numpy float32 path on a 1000×1000 crop.
+-        alpha_3c = cv2.merge([alpha_crop, alpha_crop, alpha_crop])
+-        inv_alpha = 255 - alpha_3c
+-        a_fake = cv2.multiply(bgr_fake_crop, alpha_3c, scale=1.0 / 255.0)
+-        a_tgt = cv2.multiply(target_crop, inv_alpha, scale=1.0 / 255.0)
+-        target_img[y1p:y2p, x1p:x2p] = cv2.add(a_fake, a_tgt)
++    # Fused uint8 blend via cv2 SIMD — no float32 round-trip. Faster than
++    # the former torch CUDA blend at face-crop sizes, which paid an upload
++    # and a download per face (RTX 4060: 0.15 vs 0.68 ms at 250 px, 0.43 vs
++    # 1.24 ms at 400 px), and identical within 1 level.
++    alpha_3c = cv2.merge([alpha_crop, alpha_crop, alpha_crop])
++    inv_alpha = 255 - alpha_3c
++    a_fake = cv2.multiply(bgr_fake_crop, alpha_3c, scale=1.0 / 255.0)
++    a_tgt = cv2.multiply(target_crop, inv_alpha, scale=1.0 / 255.0)
++    target_img[y1p:y2p, x1p:x2p] = cv2.add(a_fake, a_tgt)
+ 
+     return target_img
+ 

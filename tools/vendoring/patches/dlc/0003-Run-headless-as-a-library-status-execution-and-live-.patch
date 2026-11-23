@@ -1,0 +1,1220 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 12 Nov 2026 21:00:00 -0500
+Subject: [PATCH] Run headless as a library: status, execution and live modules
+
+Deep-Live-Cam as a library another application drives, with no desktop
+UI (vendor_dlc.py leaves the UI files out):
+
+- deep_live_cam: the public API (configure, ensure_models,
+  preload_models, LiveSession, swap_image, list_cameras, ...);
+- modules/live.py: LiveConfig and configure(), the per-frame
+  FramePipeline, LiveSession (camera, processing and sinks on background
+  threads), DelayedSink, and run_cli() for `--live`;
+- modules/cameras.py, modules/virtual_camera.py: camera listing and a
+  virtual-camera sink;
+- modules/status.py: update_status() with listeners, replacing core's
+  UI-bound one; modules/execution.py: the execution-provider helpers,
+  moved out of core;
+- core.py: no UI; `--live`, `--camera`, `--width`, `--height` and
+  `--virtual-camera` run a live session from the command line;
+- frame processors load relative to their package, so the code works
+  under any top-level package name.
+
+Reconstructed from Deep-Live-Cam branch headless-library at 047c551,
+which Applio vendored on 2026-11-12; that branch was never pushed, so its
+own history is lost.
+---
+ _vendor/deep_live_cam/__init__.py             |  59 ++
+ _vendor/modules/cameras.py                    |  49 ++
+ _vendor/modules/core.py                       | 110 ++--
+ _vendor/modules/execution.py                  |  45 ++
+ _vendor/modules/globals.py                    |   5 +-
+ _vendor/modules/live.py                       | 558 ++++++++++++++++++
+ _vendor/modules/processors/frame/core.py      |   2 +-
+ .../modules/processors/frame/face_enhancer.py |   2 +-
+ .../processors/frame/face_enhancer_gpen256.py |   2 +-
+ .../processors/frame/face_enhancer_gpen512.py |   2 +-
+ .../modules/processors/frame/face_swapper.py  |   2 +-
+ _vendor/modules/status.py                     |  38 ++
+ _vendor/modules/virtual_camera.py             |  70 +++
+ 13 files changed, 880 insertions(+), 64 deletions(-)
+ create mode 100644 _vendor/deep_live_cam/__init__.py
+ create mode 100644 _vendor/modules/cameras.py
+ create mode 100644 _vendor/modules/execution.py
+ create mode 100644 _vendor/modules/live.py
+ create mode 100644 _vendor/modules/status.py
+ create mode 100644 _vendor/modules/virtual_camera.py
+
+diff --git a/_vendor/deep_live_cam/__init__.py b/_vendor/deep_live_cam/__init__.py
+new file mode 100644
+index 0000000..835e185
+--- /dev/null
++++ b/_vendor/deep_live_cam/__init__.py
+@@ -0,0 +1,59 @@
++"""Public API for embedding Deep-Live-Cam in another application.
++
++    from _vendor import deep_live_cam as dlc
++
++    dlc.configure(dlc.LiveConfig(source_path="face.jpg", swap_model="hyperswap_1a_256"))
++    dlc.ensure_models()                       # downloads missing models
++    dlc.preload_models()                      # optional: load/compile now, not on frame 1
++    cams = dlc.list_cameras()                 # [(index, name), ...] real cameras first
++    session = dlc.LiveSession(cams[0][0], sinks=[dlc.VirtualCameraSink()])
++    session.start()
++    frame = session.latest_frame              # newest swapped BGR frame, for previews
++    session.stop()
++
++    out = dlc.swap_image(bgr_image)           # one-off swap of a single image
++
++Settings are process-wide (one configuration and one live session per
++process); configure() can be called again while a session runs and takes
++effect on the next frame. Subscribe to progress/errors with
++add_status_listener(fn(message, scope)).
++"""
++
++from _vendor.modules.cameras import is_virtual_camera, list_cameras
++from _vendor.modules.execution import suggest_default_execution_provider, suggest_execution_providers
++from _vendor.modules.live import (
++    ENHANCERS,
++    SWAP_MODELS,
++    FramePipeline,
++    LiveConfig,
++    LiveSession,
++    configure,
++    ensure_models,
++    preload_models,
++    swap_image,
++)
++from _vendor.modules.metadata import version as __version__
++from _vendor.modules.paths import MODELS_DIR
++from _vendor.modules.status import add_status_listener, remove_status_listener
++from _vendor.modules.virtual_camera import VirtualCameraSink
++
++__all__ = [
++    "ENHANCERS",
++    "SWAP_MODELS",
++    "FramePipeline",
++    "LiveConfig",
++    "LiveSession",
++    "MODELS_DIR",
++    "VirtualCameraSink",
++    "__version__",
++    "add_status_listener",
++    "configure",
++    "ensure_models",
++    "is_virtual_camera",
++    "list_cameras",
++    "preload_models",
++    "remove_status_listener",
++    "suggest_default_execution_provider",
++    "suggest_execution_providers",
++    "swap_image",
++]
+diff --git a/_vendor/modules/cameras.py b/_vendor/modules/cameras.py
+new file mode 100644
+index 0000000..f332781
+--- /dev/null
++++ b/_vendor/modules/cameras.py
+@@ -0,0 +1,49 @@
++"""Enumerate capture devices as (index, name) pairs usable with VideoCapturer."""
++
++from __future__ import annotations
++
++import platform
++from typing import List, Tuple
++
++import cv2
++
++Camera = Tuple[int, str]
++
++
++def list_cameras() -> List[Camera]:
++    """Return available cameras, real devices first.
++
++    Virtual cameras (e.g. "OBS Virtual Camera") are sorted last: AVFoundation
++    often lists them first, and using one as the input while also sending to
++    it loops the output back in.
++    """
++    system = platform.system()
++    if system == "Windows":
++        try:
++            from pygrabber.dshow_graph import FilterGraph
++
++            cams = list(enumerate(FilterGraph().get_input_devices()))
++        except Exception as exc:
++            print(f"Error detecting cameras: {exc}")
++            cams = []
++    elif system == "Darwin":
++        try:
++            from cv2_enumerate_cameras import enumerate_cameras
++
++            cams = [(c.index, c.name) for c in enumerate_cameras(cv2.CAP_AVFOUNDATION)]
++        except Exception as exc:
++            print(f"Error detecting cameras: {exc}")
++            cams = [(0, "Camera 0"), (1, "Camera 1")]
++    else:
++        cams = []
++        for i in range(10):
++            cap = cv2.VideoCapture(f"/dev/video{i}")
++            if cap.isOpened():
++                cams.append((i, f"Camera {i}"))
++                cap.release()
++    cams.sort(key=lambda c: is_virtual_camera(c[1]))
++    return cams
++
++
++def is_virtual_camera(name: str) -> bool:
++    return "virtual" in name.lower()
+diff --git a/_vendor/modules/core.py b/_vendor/modules/core.py
+index 0a0a278..3de1767 100644
+--- a/_vendor/modules/core.py
++++ b/_vendor/modules/core.py
+@@ -6,7 +6,6 @@ if any(arg.startswith('--execution-provider') for arg in sys.argv):
+ # reduce tensorflow log level
+ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+ import warnings
+-from typing import List
+ import platform
+ import signal
+ import shutil
+@@ -16,7 +15,6 @@ try:
+     HAS_TORCH = True
+ except ImportError:
+     HAS_TORCH = False
+-import onnxruntime
+ try:
+     import tensorflow
+     HAS_TENSORFLOW = True
+@@ -27,8 +25,14 @@ from _vendor import modules  # noqa: F401
+ 
+ import _vendor.modules.globals as _modules_globals  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.globals`)
+ import _vendor.modules.metadata as _modules_metadata  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.metadata`)
+-import modules.ui as ui
+ from _vendor.modules.processors.frame.core import get_frame_processors_modules, process_video_in_memory
++from _vendor.modules.status import update_status
++from _vendor.modules.execution import (
++    decode_execution_providers,
++    suggest_default_execution_provider,
++    suggest_execution_providers,
++    suggest_execution_threads as _suggest_execution_threads,
++)
+ from _vendor.modules.utilities import has_image_extension, is_image, is_video, detect_fps, create_video, extract_frames, get_temp_frame_paths, restore_audio, create_temp, move_temp, clean_temp, normalize_output_path
+ 
+ if HAS_TORCH and 'ROCMExecutionProvider' in modules.globals.execution_providers:
+@@ -39,9 +43,15 @@ if HAS_TORCH:
+     warnings.filterwarnings('ignore', category=UserWarning, module='torchvision')
+ 
+ 
++_ARGS = None
++_PARSER = None
++
++
+ def parse_args() -> None:
+-    signal.signal(signal.SIGINT, lambda signal_number, frame: destroy())
+-    program = argparse.ArgumentParser()
++    global _ARGS, _PARSER
++    program = argparse.ArgumentParser(
++        description='Deep-Live-Cam: swap a face into an image/video (-s/-t/-o) or a live camera (--live).'
++    )
+     program.add_argument('-s', '--source', help='select an source image', dest='source_path')
+     program.add_argument('-t', '--target', help='select an target image or video', dest='target_path')
+     program.add_argument('-o', '--output', help='select output file or directory', dest='output_path')
+@@ -56,9 +66,12 @@ def parse_args() -> None:
+     program.add_argument('--mouth-mask', help='mask the mouth region', dest='mouth_mask', action='store_true', default=False)
+     program.add_argument('--video-encoder', help='adjust output video encoder', dest='video_encoder', default='libx264', choices=['libx264', 'libx265', 'libvpx-vp9'])
+     program.add_argument('--video-quality', help='adjust output video quality', dest='video_quality', type=int, default=18, choices=range(52), metavar='[0-51]')
+-    program.add_argument('-l', '--lang', help='Ui language', default="en")
+     program.add_argument('--live-mirror', help='The live camera display as you see it in the front-facing camera frame', dest='live_mirror', action='store_true', default=False)
+-    program.add_argument('--live-resizable', help='The live camera frame is resizable', dest='live_resizable', action='store_true', default=False)
++    program.add_argument('--live', help='live mode: swap the source face into a camera feed until Ctrl+C', dest='live', action='store_true', default=False)
++    program.add_argument('--camera', help='camera index for --live (default: first real camera)', dest='camera', type=int, default=None)
++    program.add_argument('--width', help='requested camera width for --live', dest='width', type=int, default=1280)
++    program.add_argument('--height', help='requested camera height for --live', dest='height', type=int, default=720)
++    program.add_argument('--virtual-camera', help='with --live, send frames to a virtual camera (OBS Virtual Camera on macOS)', dest='virtual_camera', action='store_true', default=False)
+     program.add_argument('--max-memory', help='maximum amount of RAM in GB', dest='max_memory', type=int, default=suggest_max_memory())
+     program.add_argument('--execution-provider', help='execution provider', dest='execution_provider', default=[suggest_default_execution_provider()], choices=suggest_execution_providers(), nargs='+')
+     program.add_argument('--execution-threads', help='number of execution threads', dest='execution_threads', type=int, default=None)
+@@ -72,13 +85,16 @@ def parse_args() -> None:
+     program.add_argument('--gpu-threads', help=argparse.SUPPRESS, dest='gpu_threads_deprecated', type=int)
+ 
+     args = program.parse_args()
++    _ARGS, _PARSER = args, program
++    if not args.live:
++        signal.signal(signal.SIGINT, lambda signal_number, frame: destroy())
+ 
+     modules.globals.source_path = args.source_path
+     modules.globals.target_path = args.target_path
+     modules.globals.output_path = normalize_output_path(modules.globals.source_path, modules.globals.target_path, args.output_path)
+     modules.globals.frame_processors = args.frame_processor
+     modules.globals.swap_model = args.swap_model
+-    modules.globals.headless = args.source_path or args.target_path or args.output_path
++    modules.globals.headless = True
+     modules.globals.keep_fps = args.keep_fps
+     modules.globals.keep_audio = args.keep_audio
+     modules.globals.keep_frames = args.keep_frames
+@@ -89,12 +105,10 @@ def parse_args() -> None:
+     modules.globals.video_encoder = args.video_encoder
+     modules.globals.video_quality = args.video_quality
+     modules.globals.live_mirror = args.live_mirror
+-    modules.globals.live_resizable = args.live_resizable
+     modules.globals.max_memory = args.max_memory
+     modules.globals.execution_providers = decode_execution_providers(args.execution_provider)
+     modules.globals.execution_threads = args.execution_threads
+     modules.globals.det_size = args.det_size
+-    modules.globals.lang = args.lang
+ 
+     # The argparse default (None) avoids evaluating suggest_execution_threads()
+     # before providers are decoded, and deprecated-arg overrides above may
+@@ -128,13 +142,8 @@ def parse_args() -> None:
+         modules.globals.execution_threads = args.gpu_threads_deprecated
+ 
+ 
+-def encode_execution_providers(execution_providers: List[str]) -> List[str]:
+-    return [execution_provider.replace('ExecutionProvider', '').lower() for execution_provider in execution_providers]
+ 
+ 
+-def decode_execution_providers(execution_providers: List[str]) -> List[str]:
+-    return [provider for provider, encoded_execution_provider in zip(onnxruntime.get_available_providers(), encode_execution_providers(onnxruntime.get_available_providers()))
+-            if any(execution_provider in encoded_execution_provider for execution_provider in execution_providers)]
+ 
+ 
+ def suggest_max_memory() -> int:
+@@ -143,37 +152,13 @@ def suggest_max_memory() -> int:
+     return 16
+ 
+ 
+-def suggest_default_execution_provider() -> str:
+-    """Pick the best available provider: cuda > rocm > coreml > openvino > dml > cpu."""
+-    available = encode_execution_providers(onnxruntime.get_available_providers())
+-    for pref in ('cuda', 'rocm', 'coreml', 'openvino', 'dml'):
+-        if pref in available:
+-            return pref
+-    return 'cpu'
+ 
+ 
+-def suggest_execution_providers() -> List[str]:
+-    return encode_execution_providers(onnxruntime.get_available_providers())
+ 
+ 
+ def suggest_execution_threads() -> int:
+-    """Suggest optimal thread count based on hardware and execution provider."""
+-    import os
+-    
+-    # Get CPU count
+-    cpu_count = os.cpu_count() or 4
+-    
+-    if 'DmlExecutionProvider' in modules.globals.execution_providers:
+-        return 1
+-    if 'ROCMExecutionProvider' in modules.globals.execution_providers:
+-        return 1
+-    if 'CUDAExecutionProvider' in modules.globals.execution_providers:
+-        return 2
+-    if 'OpenVINOExecutionProvider' in modules.globals.execution_providers:
+-        return 1
+-    
+-    # For CPU execution, use most cores but leave some for system
+-    return max(4, min(cpu_count - 2, 16))
++    """Suggest optimal thread count for the configured execution providers."""
++    return _suggest_execution_threads(modules.globals.execution_providers)
+ 
+ 
+ def limit_resources() -> None:
+@@ -213,10 +198,22 @@ def pre_check() -> bool:
+     return True
+ 
+ 
+-def update_status(message: str, scope: str = 'DLC.CORE') -> None:
+-    print(f'[{scope}] {message}')
+-    if not modules.globals.headless:
+-        ui.update_status(message)
++
++def check_and_ignore_nsfw(target: str, destroy_cb=None) -> bool:
++    """Return True (and skip processing) when the NSFW filter flags the target.
++
++    Needs the optional NSFW model: pip install deep-live-cam[nsfw].
++    """
++    from _vendor.modules.predicter import predict_image, predict_video
++
++    check_nsfw = predict_image if has_image_extension(target) else predict_video
++    if check_nsfw(target):
++        if destroy_cb:
++            destroy_cb(to_quit=False)
++        update_status("Processing ignored!")
++        return True
++    return False
++
+ 
+ def start() -> None:
+     """Start processing with performance monitoring."""
+@@ -231,7 +228,7 @@ def start() -> None:
+     
+     # process image to image
+     if has_image_extension(modules.globals.target_path):
+-        if modules.globals.nsfw_filter and ui.check_and_ignore_nsfw(modules.globals.target_path, destroy):
++        if modules.globals.nsfw_filter and check_and_ignore_nsfw(modules.globals.target_path, destroy):
+             return
+         try:
+             shutil.copy2(modules.globals.target_path, modules.globals.output_path)
+@@ -249,7 +246,7 @@ def start() -> None:
+         return
+     
+     # process image to videos
+-    if modules.globals.nsfw_filter and ui.check_and_ignore_nsfw(modules.globals.target_path, destroy):
++    if modules.globals.nsfw_filter and check_and_ignore_nsfw(modules.globals.target_path, destroy):
+         return
+ 
+     # Detect FPS early (needed by both pipelines)
+@@ -345,17 +342,20 @@ def destroy(to_quit=True) -> None:
+ 
+ def run() -> None:
+     parse_args()
++    if _ARGS.live:
++        if not modules.globals.source_path:
++            _PARSER.error("--live needs a source face: -s/--source")
++    elif not (modules.globals.source_path and modules.globals.target_path):
++        _PARSER.print_help()
++        print("\nError: give -s SOURCE -t TARGET [-o OUTPUT] to process a file, or -s SOURCE --live.")
++        sys.exit(2)
+     if not pre_check():
+         return
+     for frame_processor in get_frame_processors_modules(modules.globals.frame_processors):
+         if not frame_processor.pre_check():
+             return
+-    # Pre-load face analyser in main thread before GUI starts
+-    #from modules.face_analyser import get_face_analyser
+-    #get_face_analyser()
+     limit_resources()
+-    if modules.globals.headless:
+-        start()
+-    else:
+-        window = ui.init(start, destroy, modules.globals.lang)
+-        window.mainloop()
+\ No newline at end of file
++    if _ARGS.live:
++        from _vendor.modules import live
++        sys.exit(live.run_cli(_ARGS.camera, _ARGS.width, _ARGS.height, _ARGS.virtual_camera))
++    start()
+diff --git a/_vendor/modules/execution.py b/_vendor/modules/execution.py
+new file mode 100644
+index 0000000..1562640
+--- /dev/null
++++ b/_vendor/modules/execution.py
+@@ -0,0 +1,45 @@
++"""ONNX Runtime execution-provider helpers shared by the CLI and the library."""
++
++from __future__ import annotations
++
++import os
++from typing import List
++
++import onnxruntime
++
++
++def encode_execution_providers(execution_providers: List[str]) -> List[str]:
++    return [p.replace("ExecutionProvider", "").lower() for p in execution_providers]
++
++
++def decode_execution_providers(execution_providers: List[str]) -> List[str]:
++    available = onnxruntime.get_available_providers()
++    return [
++        provider
++        for provider, encoded in zip(available, encode_execution_providers(available))
++        if any(wanted in encoded for wanted in execution_providers)
++    ]
++
++
++def suggest_default_execution_provider() -> str:
++    """Pick the best available provider: cuda > rocm > coreml > openvino > dml > cpu."""
++    available = encode_execution_providers(onnxruntime.get_available_providers())
++    for pref in ("cuda", "rocm", "coreml", "openvino", "dml"):
++        if pref in available:
++            return pref
++    return "cpu"
++
++
++def suggest_execution_providers() -> List[str]:
++    return encode_execution_providers(onnxruntime.get_available_providers())
++
++
++def suggest_execution_threads(execution_providers: List[str]) -> int:
++    """Suggest a thread count for the given decoded providers."""
++    for single in ("DmlExecutionProvider", "ROCMExecutionProvider", "OpenVINOExecutionProvider"):
++        if single in execution_providers:
++            return 1
++    if "CUDAExecutionProvider" in execution_providers:
++        return 2
++    cpu_count = os.cpu_count() or 4
++    return max(4, min(cpu_count - 2, 16))
+diff --git a/_vendor/modules/globals.py b/_vendor/modules/globals.py
+index 9febcb8..66a1146 100644
+--- a/_vendor/modules/globals.py
++++ b/_vendor/modules/globals.py
+@@ -40,9 +40,6 @@ video_quality: int | None = None # Typically a CRF value or bitrate
+ 
+ # Live Mode Options
+ live_mirror: bool = False
+-live_resizable: bool = True
+-camera_input_combobox: Any | None = None # Placeholder for UI element if needed
+-webcam_preview_running: bool = False
+ show_fps: bool = False
+ live_async_swap: bool = False    # Run the swap model off the live loop (see AsyncLiveSwapper)
+ 
+@@ -87,7 +84,7 @@ det_size: int = DEFAULT_DET_SIZE
+ # Camera may negotiate to its nearest supported size — actual size is
+ # printed in console as "[VideoCapturer] WxH @ FPS".
+ # Default 640x480: native on virtually every webcam, fastest reliable mode
+-# on USB 2.0. Higher 16:9 tiers (540/720/1080) selectable in UI.
++# on USB 2.0. Used by the CLI; LiveSession takes its own width/height.
+ capture_resolution: tuple = (640, 480)
+ 
+ # --- END OF FILE globals.py ---
+diff --git a/_vendor/modules/live.py b/_vendor/modules/live.py
+new file mode 100644
+index 0000000..19dd972
+--- /dev/null
++++ b/_vendor/modules/live.py
+@@ -0,0 +1,558 @@
++"""Headless live face swap: configuration, per-frame pipeline and live session.
++
++This is the embeddable core of Deep-Live-Cam's live mode. It has no UI
++dependency, so another application (CLI, Gradio, ...) can drive it:
++
++    from _vendor.modules import live
++
++    live.configure(live.LiveConfig(source_path="face.jpg", enhancer="gfpgan"))
++    live.ensure_models()
++    session = live.LiveSession(camera_index=1, sinks=[VirtualCameraSink()])
++    session.start()
++    ...  # session.latest_frame / session.fps
++    session.stop()
++
++Settings live in ``modules.globals`` (the processors read them from there), so
++there is one active configuration per process. The pipeline re-reads them on
++every frame, so calling configure() while a session runs applies immediately.
++"""
++
++from __future__ import annotations
++
++import queue
++import threading
++import time
++from dataclasses import dataclass, field
++from typing import Callable, List, Optional, Sequence
++
++import cv2
++import numpy as np
++
++from _vendor import modules  # noqa: F401
++
++import _vendor.modules.globals as _modules_globals  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.globals`)
++from _vendor.modules import imread_unicode
++from _vendor.modules.execution import (
++    decode_execution_providers,
++    suggest_default_execution_provider,
++    suggest_execution_threads,
++)
++from _vendor.modules.face_analyser import (
++    detect_many_faces_fast,
++    detect_one_face_fast,
++    ensure_landmarks,
++    get_one_face,
++    reset_face_analyser,
++)
++from _vendor.modules.gpu_processing import gpu_flip
++from _vendor.modules.processors.frame.core import get_frame_processors_modules
++from _vendor.modules.status import update_status
++from _vendor.modules.video_capture import VideoCapturer
++
++Frame = np.ndarray
++FrameSink = Callable[[Frame], None]
++
++# How long the face may go undetected before the last async swap result is
++# dropped. A short detector miss keeps it, so the swap resumes at once instead
++# of showing the real face for a whole inference.
++ASYNC_SWAP_FACE_LOSS_GRACE_S = 0.5
++
++# Kept in step with modules.processors.frame.face_swapper.SWAP_MODELS (not
++# imported here so configure() does not load the swapper module).
++SWAP_MODELS = ("inswapper_128", "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256")
++
++ENHANCERS = {
++    "gfpgan": "face_enhancer",
++    "gpen256": "face_enhancer_gpen256",
++    "gpen512": "face_enhancer_gpen512",
++}
++
++
++# ─── configuration ───────────────────────────────────────────────────────
++
++
++@dataclass
++class LiveConfig:
++    """Everything the live pipeline reads. Maps onto ``modules.globals``."""
++
++    source_path: Optional[str] = None
++    swap_model: str = "hyperswap_1c_256"    # see SWAP_MODELS; fastest + best on Apple Silicon in our benchmark
++    enhancer: Optional[str] = None          # None | "gfpgan" | "gpen256" | "gpen512"
++    execution_providers: Sequence[str] = field(
++        default_factory=lambda: [suggest_default_execution_provider()]
++    )                                       # short names: "coreml", "cuda", "cpu", ...
++    det_size: int = modules.globals.DEFAULT_DET_SIZE  # 160 | 320 | 640
++    many_faces: bool = False
++    mouth_mask: float = 0.0                 # 0 = off, 100 = original mouth down to chin
++    color_correction: bool = False
++    poisson_blend: bool = False
++    opacity: float = 1.0
++    sharpness: float = 0.0
++    mirror: bool = False
++    async_swap: bool = False
++    show_fps: bool = False
++
++
++def configure(config: LiveConfig) -> None:
++    """Apply a LiveConfig to the process-wide settings the processors read."""
++    if config.enhancer is not None and config.enhancer not in ENHANCERS:
++        raise ValueError(f"unknown enhancer {config.enhancer!r}; use one of {sorted(ENHANCERS)}")
++    if config.swap_model not in SWAP_MODELS:
++        raise ValueError(f"unknown swap model {config.swap_model!r}; use one of {SWAP_MODELS}")
++    if config.det_size not in (160, 320, 640):
++        raise ValueError("det_size must be 160, 320 or 640")
++
++    g = modules.globals
++    providers = decode_execution_providers(list(config.execution_providers))
++    if not providers:
++        providers = decode_execution_providers(["cpu"])
++    if providers != g.execution_providers:
++        g.execution_providers = providers
++        g.execution_threads = suggest_execution_threads(providers)
++        reset_face_analyser()
++    elif g.execution_threads is None:
++        g.execution_threads = suggest_execution_threads(providers)
++
++    if config.det_size != g.det_size:
++        g.det_size = config.det_size
++        reset_face_analyser()
++
++    g.source_path = config.source_path
++    g.swap_model = config.swap_model
++    g.target_path = None
++    g.map_faces = False
++    g.many_faces = config.many_faces
++    g.mouth_mask_size = float(config.mouth_mask)
++    g.mouth_mask = config.mouth_mask > 0
++    g.show_mouth_mask_box = False
++    g.color_correction = config.color_correction
++    g.poisson_blend = config.poisson_blend
++    g.opacity = config.opacity
++    g.sharpness = config.sharpness
++    g.live_mirror = config.mirror
++    g.live_async_swap = config.async_swap
++    g.show_fps = config.show_fps
++
++    if "face_swapper" not in g.frame_processors:
++        g.frame_processors.insert(0, "face_swapper")
++    for name, module in ENHANCERS.items():
++        g.fp_ui[module] = config.enhancer == name
++    # Load/unload enhancer modules to match fp_ui. A running FramePipeline
++    # holds this same module list, so an enhancer switched on mid-session
++    # takes effect on its next frame.
++    get_frame_processors_modules(g.frame_processors)
++
++
++def ensure_models() -> bool:
++    """Download any missing models for the configured processors."""
++    names = ["face_swapper"] + [m for m, on in modules.globals.fp_ui.items() if on]
++    try:
++        processors = get_frame_processors_modules(names)
++    except SystemExit:
++        return False
++    return all(p.pre_check() for p in processors)
++
++
++def preload_models() -> None:
++    """Load the face analyser and every configured model now.
++
++    Models otherwise load on the first frame, which on CoreML means several
++    seconds of compilation while the live preview crawls.
++    """
++    from _vendor.modules.face_analyser import get_face_analyser
++
++    get_face_analyser()
++    for processor in get_frame_processors_modules(modules.globals.frame_processors):
++        loader = (getattr(processor, "get_face_swapper", None)
++                  or getattr(processor, "get_face_enhancer", None)
++                  or getattr(processor, "get_enhancer", None))
++        if loader is not None:
++            loader()
++
++
++def swap_image(target: Frame) -> Frame:
++    """Swap the configured source face into a single BGR image."""
++    pipeline = FramePipeline(camera_fps=1.0)  # detect on every frame
++    try:
++        return pipeline.process(target.copy())
++    finally:
++        pipeline.close()
++
++
++# ─── per-frame pipeline ──────────────────────────────────────────────────
++
++
++class FramePipeline:
++    """Runs detect -> swap -> enhance on successive frames of one stream.
++
++    Holds the per-stream state: the loaded source face, cached detections
++    (detection runs every few frames), the async swapper and an FPS counter.
++    Not thread-safe; use one per stream.
++    """
++
++    def __init__(self, camera_fps: float = 30.0):
++        self._frame_processors = get_frame_processors_modules(modules.globals.frame_processors)
++        self._async_swapper = None
++        self._face_lost_at = None
++        self._source_image = None
++        self._last_source_path = None
++        self._reported_source_error = None
++        self._prev_time = time.time()
++        self._frame_count = 0
++        self.fps = 0.0
++        self._det_count = 0
++        self._cached_target_face = None
++        self._cached_many_faces = None
++        self._det_interval = max(1, round(camera_fps * 0.08))
++
++    def process(self, frame: Frame) -> Frame:
++        temp_frame = frame
++        if modules.globals.live_mirror:
++            temp_frame = gpu_flip(temp_frame, 1)
++
++        if not modules.globals.map_faces:
++            temp_frame = self._process_single_or_many(temp_frame)
++        else:
++            temp_frame = self._process_mapped(temp_frame)
++
++        current_time = time.time()
++        self._frame_count += 1
++        if current_time - self._prev_time >= 0.5:
++            self.fps = self._frame_count / (current_time - self._prev_time)
++            self._frame_count = 0
++            self._prev_time = current_time
++
++        if modules.globals.show_fps:
++            cv2.putText(
++                temp_frame, f"FPS: {self.fps:.1f}", (10, 30),
++                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2,
++            )
++        return temp_frame
++
++    def close(self) -> None:
++        if self._async_swapper is not None:
++            self._async_swapper.close()
++            self._async_swapper = None
++
++    # The two branches below are the former Qt live-preview worker loop,
++    # unchanged apart from living on an object.
++
++    def _process_single_or_many(self, temp_frame: Frame) -> Frame:
++        source_path = modules.globals.source_path
++        if not source_path:
++            # Clearing the selection also invalidates cached and in-flight
++            # swaps before processing another frame.
++            self._source_image = None
++            self._last_source_path = None
++            self._reported_source_error = None
++            if self._async_swapper is not None:
++                self._async_swapper.clear()
++        elif source_path != self._last_source_path:
++            source_frame = imread_unicode(source_path)
++            if source_frame is None:
++                # Clear the cached path along with the image so a transiently
++                # unreadable source is retried and A -> bad B -> A reloads A.
++                # The message is reported once per path.
++                self._source_image = None
++                self._last_source_path = None
++                if self._reported_source_error != source_path:
++                    self._reported_source_error = source_path
++                    update_status(f"Could not read source image: {source_path}")
++            else:
++                self._last_source_path = source_path
++                self._reported_source_error = None
++                self._source_image = get_one_face(source_frame)
++
++        self._det_count += 1
++        if self._det_count % self._det_interval == 0:
++            if modules.globals.many_faces:
++                self._cached_target_face = None
++                self._cached_many_faces = detect_many_faces_fast(temp_frame)
++            else:
++                self._cached_target_face = detect_one_face_fast(temp_frame)
++                self._cached_many_faces = None
++
++        cached_faces = None
++        if self._cached_many_faces:
++            cached_faces = self._cached_many_faces
++        elif self._cached_target_face is not None:
++            cached_faces = [self._cached_target_face]
++
++        # Fast detection skips the 2d106 landmark model, but the mouth mask
++        # needs it. Attach landmarks on demand.
++        if modules.globals.mouth_mask and cached_faces:
++            ensure_landmarks(temp_frame, cached_faces)
++
++        source_image = self._source_image
++        for fp in self._frame_processors:
++            if fp.NAME == "DLC.FACE-ENHANCER":
++                if modules.globals.fp_ui["face_enhancer"]:
++                    temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
++            elif fp.NAME == "DLC.FACE-ENHANCER-GPEN256":
++                if modules.globals.fp_ui.get("face_enhancer_gpen256", False):
++                    temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
++            elif fp.NAME == "DLC.FACE-ENHANCER-GPEN512":
++                if modules.globals.fp_ui.get("face_enhancer_gpen512", False):
++                    temp_frame = fp.process_frame(None, temp_frame, detected_faces=cached_faces)
++            elif fp.NAME == "DLC.FACE-SWAPPER":
++                swapped_bboxes = []
++                if modules.globals.many_faces and self._cached_many_faces:
++                    result = temp_frame.copy()
++                    for t_face in self._cached_many_faces:
++                        result = fp.swap_face(source_image, t_face, result)
++                        if hasattr(t_face, "bbox") and t_face.bbox is not None:
++                            swapped_bboxes.append(t_face.bbox.astype(int))
++                    temp_frame = result
++                elif self._cached_target_face is not None:
++                    if modules.globals.live_async_swap:
++                        if self._async_swapper is None:
++                            self._async_swapper = fp.AsyncLiveSwapper()
++                        temp_frame = self._async_swapper.swap(
++                            source_image, self._cached_target_face, temp_frame
++                        )
++                    else:
++                        temp_frame = fp.swap_face(source_image, self._cached_target_face, temp_frame)
++                    if hasattr(self._cached_target_face, "bbox") and self._cached_target_face.bbox is not None:
++                        swapped_bboxes.append(self._cached_target_face.bbox.astype(int))
++                temp_frame = fp.apply_post_processing(temp_frame, swapped_bboxes)
++            else:
++                temp_frame = fp.process_frame(source_image, temp_frame)
++
++        # Once the face has been gone for a while, or async swap is switched
++        # off, the last async result is stale.
++        if self._cached_target_face is not None:
++            self._face_lost_at = None
++        elif self._face_lost_at is None:
++            self._face_lost_at = time.monotonic()
++        if self._async_swapper is not None and (
++            not modules.globals.live_async_swap
++            or (
++                self._face_lost_at is not None
++                and time.monotonic() - self._face_lost_at > ASYNC_SWAP_FACE_LOSS_GRACE_S
++            )
++        ):
++            self._async_swapper.clear()
++        return temp_frame
++
++    def _process_mapped(self, temp_frame: Frame) -> Frame:
++        modules.globals.target_path = None
++        # Single-face state goes stale while map-faces runs: resume from a
++        # fresh detection and a fresh async result.
++        self._cached_target_face = None
++        self._cached_many_faces = None
++        if self._async_swapper is not None:
++            self._async_swapper.clear()
++        for fp in self._frame_processors:
++            if fp.NAME == "DLC.FACE-ENHANCER":
++                if modules.globals.fp_ui["face_enhancer"]:
++                    temp_frame = fp.process_frame_v2(temp_frame)
++            elif fp.NAME in ("DLC.FACE-ENHANCER-GPEN256", "DLC.FACE-ENHANCER-GPEN512"):
++                fp_key = fp.NAME.split(".")[-1].lower().replace("-", "_")
++                if modules.globals.fp_ui.get(fp_key, False):
++                    temp_frame = fp.process_frame_v2(temp_frame)
++            else:
++                temp_frame = fp.process_frame_v2(temp_frame)
++        return temp_frame
++
++
++# ─── live session ────────────────────────────────────────────────────────
++
++
++def _put_latest(q: queue.Queue, item) -> None:
++    """Put without blocking, dropping the oldest item when full."""
++    try:
++        q.put_nowait(item)
++    except queue.Full:
++        try:
++            q.get_nowait()
++        except queue.Empty:
++            pass
++        try:
++            q.put_nowait(item)
++        except queue.Full:
++            pass
++
++
++class LiveSession:
++    """Camera -> FramePipeline -> sinks, on two background threads.
++
++    ``sinks`` are callables taking each processed BGR frame (for example a
++    VirtualCameraSink). A sink that raises is dropped for the rest of the
++    session. The newest processed frame is always available as
++    ``latest_frame`` for previews.
++    """
++
++    def __init__(
++        self,
++        camera_index: int,
++        width: int = 1280,
++        height: int = 720,
++        fps: int = 60,
++        sinks: Sequence[FrameSink] = (),
++        capture_factory: Callable[[int], VideoCapturer] = VideoCapturer,
++    ):
++        self.camera_index = camera_index
++        self.requested = (width, height, fps)
++        self.sinks: List[FrameSink] = list(sinks)
++        self._capture_factory = capture_factory
++        self._cap = None
++        self._pipeline: Optional[FramePipeline] = None
++        self._stop = threading.Event()
++        self._threads: List[threading.Thread] = []
++        self._capture_q: queue.Queue = queue.Queue(maxsize=2)
++        self._latest_lock = threading.Lock()
++        self._latest: Optional[Frame] = None
++        self.camera_size = (0, 0)
++        self.camera_fps = 0.0
++        self.error: Optional[str] = None
++
++    # public API
++
++    @property
++    def running(self) -> bool:
++        return any(t.is_alive() for t in self._threads)
++
++    @property
++    def fps(self) -> float:
++        return self._pipeline.fps if self._pipeline is not None else 0.0
++
++    @property
++    def latest_frame(self) -> Optional[Frame]:
++        with self._latest_lock:
++            return self._latest
++
++    def start(self) -> None:
++        if self.running:
++            raise RuntimeError("session already running")
++        width, height, fps = self.requested
++        self._stop.clear()
++        self.error = None
++        self._cap = self._capture_factory(self.camera_index)
++        if not self._cap.start(width, height, fps):
++            self._cap.release()
++            self._cap = None
++            raise RuntimeError(f"Failed to open camera {self.camera_index}")
++        self.camera_size = (self._cap.actual_width, self._cap.actual_height)
++        self.camera_fps = self._cap.actual_fps or 30.0
++        update_status(
++            f"Camera {self.camera_index} running at "
++            f"{self.camera_size[0]}x{self.camera_size[1]}@{self.camera_fps:.0f}fps",
++            "DLC.LIVE",
++        )
++        self._pipeline = FramePipeline(self.camera_fps)
++        self._threads = [
++            threading.Thread(target=self._capture_loop, name="dlc-capture", daemon=True),
++            threading.Thread(target=self._process_loop, name="dlc-process", daemon=True),
++        ]
++        for t in self._threads:
++            t.start()
++
++    def stop(self, timeout: Optional[float] = None) -> None:
++        """Stop both threads, wait for them, then release camera and sinks."""
++        self._stop.set()
++        for t in self._threads:
++            t.join(timeout)
++        if self.running:
++            return  # timed out; caller may stop() again
++        self._threads = []
++        if self._cap is not None:
++            try:
++                self._cap.release()
++            except Exception:
++                pass
++            self._cap = None
++        if self._pipeline is not None:
++            self._pipeline.close()
++        for sink in self.sinks:
++            close = getattr(sink, "close", None)
++            if close is not None:
++                try:
++                    close()
++                except Exception:
++                    pass
++
++    def __enter__(self) -> "LiveSession":
++        self.start()
++        return self
++
++    def __exit__(self, *_exc) -> None:
++        self.stop()
++
++    # threads
++
++    def _capture_loop(self) -> None:
++        while not self._stop.is_set():
++            ret, frame = self._cap.read()
++            if not ret:
++                self.error = "camera stopped delivering frames"
++                self._stop.set()
++                break
++            _put_latest(self._capture_q, frame)
++
++    def _process_loop(self) -> None:
++        while not self._stop.is_set():
++            try:
++                frame = self._capture_q.get(timeout=0.05)
++            except queue.Empty:
++                continue
++            try:
++                out = self._pipeline.process(frame)
++            except Exception as exc:
++                self.error = f"processing failed: {exc}"
++                update_status(self.error, "DLC.LIVE")
++                self._stop.set()
++                break
++            with self._latest_lock:
++                self._latest = out
++            for sink in list(self.sinks):
++                try:
++                    sink(out)
++                except Exception as exc:
++                    update_status(f"Dropping frame sink {sink!r}: {exc}", "DLC.LIVE")
++                    self.sinks.remove(sink)
++
++
++# ─── CLI entry point (``run.py --live``) ─────────────────────────────────
++
++
++def run_cli(camera: Optional[int], width: int, height: int, virtual_camera: bool) -> int:
++    """Run a live session until Ctrl+C, printing FPS once a second."""
++    from _vendor.modules.cameras import list_cameras
++    from _vendor.modules.virtual_camera import VirtualCameraSink
++
++    if camera is None:
++        cams = list_cameras()
++        if not cams:
++            update_status("No cameras found")
++            return 1
++        camera = cams[0][0]
++        update_status(f"Using camera {camera}: {cams[0][1]}", "DLC.LIVE")
++    if not ensure_models():
++        return 1
++    preload_models()
++    sinks = [VirtualCameraSink()] if virtual_camera else []
++    session = LiveSession(camera, width, height, sinks=sinks)
++    try:
++        session.start()
++    except RuntimeError as exc:
++        update_status(str(exc), "DLC.LIVE")
++        return 1
++    try:
++        while session.running:
++            time.sleep(1.0)
++            print(f"\r[DLC.LIVE] {session.fps:5.1f} fps", end="", flush=True)
++    except KeyboardInterrupt:
++        pass
++    finally:
++        print()
++        session.stop()
++    if session.error:
++        update_status(session.error, "DLC.LIVE")
++        return 1
++    return 0
++
++
++__all__ = [
++    "ASYNC_SWAP_FACE_LOSS_GRACE_S", "ENHANCERS", "SWAP_MODELS", "FramePipeline", "LiveConfig",
++    "LiveSession", "configure", "ensure_models", "preload_models", "run_cli", "swap_image",
++]
+diff --git a/_vendor/modules/processors/frame/core.py b/_vendor/modules/processors/frame/core.py
+index 7bb15ab..f3909eb 100644
+--- a/_vendor/modules/processors/frame/core.py
++++ b/_vendor/modules/processors/frame/core.py
+@@ -34,7 +34,7 @@ def load_frame_processor_module(frame_processor: str) -> Any:
+         print(f"Frame processor {frame_processor} is not allowed")
+         sys.exit()
+     try:
+-        frame_processor_module = importlib.import_module(f'modules.processors.frame.{frame_processor}')
++        frame_processor_module = importlib.import_module(f'.{frame_processor}', __package__)
+         for method_name in FRAME_PROCESSORS_INTERFACE:
+             if not hasattr(frame_processor_module, method_name):
+                 print(f"Frame processor {frame_processor} is missing required method {method_name}")
+diff --git a/_vendor/modules/processors/frame/face_enhancer.py b/_vendor/modules/processors/frame/face_enhancer.py
+index d3bc267..65c2997 100644
+--- a/_vendor/modules/processors/frame/face_enhancer.py
++++ b/_vendor/modules/processors/frame/face_enhancer.py
+@@ -13,7 +13,7 @@ from _vendor import modules  # noqa: F401
+ import _vendor.modules.globals as _modules_globals  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.globals`)
+ import _vendor.modules.processors.frame.core as _modules_frame_core  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.processors.frame.core`)
+ from _vendor.modules import imread_unicode, imwrite_unicode
+-from _vendor.modules.core import update_status
++from _vendor.modules.status import update_status
+ from _vendor.modules.face_analyser import get_many_faces
+ from _vendor.modules.typing import Frame, Face
+ from _vendor.modules.utilities import (
+diff --git a/_vendor/modules/processors/frame/face_enhancer_gpen256.py b/_vendor/modules/processors/frame/face_enhancer_gpen256.py
+index 7fe4cf1..926ac60 100644
+--- a/_vendor/modules/processors/frame/face_enhancer_gpen256.py
++++ b/_vendor/modules/processors/frame/face_enhancer_gpen256.py
+@@ -9,7 +9,7 @@ from _vendor import modules  # noqa: F401
+ import _vendor.modules.globals as _modules_globals  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.globals`)
+ import _vendor.modules.processors.frame.core as _modules_frame_core  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.processors.frame.core`)
+ from _vendor.modules import imread_unicode, imwrite_unicode
+-from _vendor.modules.core import update_status
++from _vendor.modules.status import update_status
+ from _vendor.modules.face_analyser import get_one_face
+ from _vendor.modules.typing import Frame, Face
+ from _vendor.modules.utilities import (
+diff --git a/_vendor/modules/processors/frame/face_enhancer_gpen512.py b/_vendor/modules/processors/frame/face_enhancer_gpen512.py
+index 00495e6..edf6c43 100644
+--- a/_vendor/modules/processors/frame/face_enhancer_gpen512.py
++++ b/_vendor/modules/processors/frame/face_enhancer_gpen512.py
+@@ -9,7 +9,7 @@ from _vendor import modules  # noqa: F401
+ import _vendor.modules.globals as _modules_globals  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.globals`)
+ import _vendor.modules.processors.frame.core as _modules_frame_core  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.processors.frame.core`)
+ from _vendor.modules import imread_unicode, imwrite_unicode
+-from _vendor.modules.core import update_status
++from _vendor.modules.status import update_status
+ from _vendor.modules.face_analyser import get_one_face
+ from _vendor.modules.typing import Frame, Face
+ from _vendor.modules.utilities import (
+diff --git a/_vendor/modules/processors/frame/face_swapper.py b/_vendor/modules/processors/frame/face_swapper.py
+index f35ce1a..470c0d6 100644
+--- a/_vendor/modules/processors/frame/face_swapper.py
++++ b/_vendor/modules/processors/frame/face_swapper.py
+@@ -11,7 +11,7 @@ import _vendor.modules.globals as _modules_globals  # noqa: F401  (loads the sub
+ import _vendor.modules.processors.frame.core as _modules_frame_core  # noqa: F401  (loads the submodule; vendoring-safe form of `import modules.processors.frame.core`)
+ from insightface.utils import face_align
+ from _vendor.modules import imread_unicode, imwrite_unicode
+-from _vendor.modules.core import update_status
++from _vendor.modules.status import update_status
+ from _vendor.modules.face_analyser import get_one_face, get_many_faces, default_source_face
+ from _vendor.modules.typing import Face, Frame
+ from _vendor.modules.utilities import (
+diff --git a/_vendor/modules/status.py b/_vendor/modules/status.py
+new file mode 100644
+index 0000000..a2723bf
+--- /dev/null
++++ b/_vendor/modules/status.py
+@@ -0,0 +1,38 @@
++"""Status reporting with no UI dependency.
++
++Processors call update_status(); whoever embeds Deep-Live-Cam (the CLI, a
++Gradio app, ...) can subscribe with add_status_listener() to show messages.
++"""
++
++from __future__ import annotations
++
++import threading
++from typing import Callable, List
++
++StatusListener = Callable[[str, str], None]
++
++_LISTENERS: List[StatusListener] = []
++_LOCK = threading.Lock()
++
++
++def update_status(message: str, scope: str = "DLC.CORE") -> None:
++    print(f"[{scope}] {message}")
++    with _LOCK:
++        listeners = list(_LISTENERS)
++    for listener in listeners:
++        try:
++            listener(message, scope)
++        except Exception:
++            pass
++
++
++def add_status_listener(listener: StatusListener) -> None:
++    with _LOCK:
++        if listener not in _LISTENERS:
++            _LISTENERS.append(listener)
++
++
++def remove_status_listener(listener: StatusListener) -> None:
++    with _LOCK:
++        if listener in _LISTENERS:
++            _LISTENERS.remove(listener)
+diff --git a/_vendor/modules/virtual_camera.py b/_vendor/modules/virtual_camera.py
+new file mode 100644
+index 0000000..949c43a
+--- /dev/null
++++ b/_vendor/modules/virtual_camera.py
+@@ -0,0 +1,70 @@
++"""Send processed frames to a system virtual camera via pyvirtualcam.
++
++On macOS this targets the OBS Virtual Camera (install OBS and start its
++virtual camera once so macOS approves the extension; OBS itself does not need
++to be running).
++"""
++
++from __future__ import annotations
++
++from typing import Optional
++
++import numpy as np
++
++from _vendor.modules.status import update_status
++
++
++class VirtualCameraSink:
++    """Frame sink: call it with BGR frames.
++
++    The device is opened lazily on the first frame (so its size matches what
++    the pipeline produces) and reopened if the size changes. Any failure
++    disables the sink and records the reason in ``error`` instead of raising,
++    so a missing driver never breaks the live loop.
++    """
++
++    def __init__(self, fps: float = 30.0, device: Optional[str] = None):
++        self.fps = fps
++        self.device_name = device
++        self.error: Optional[str] = None
++        self._cam = None
++
++    @property
++    def enabled(self) -> bool:
++        return self.error is None
++
++    @property
++    def device(self) -> Optional[str]:
++        return self._cam.device if self._cam is not None else None
++
++    def __call__(self, bgr_frame: np.ndarray) -> None:
++        if self.error is not None:
++            return
++        h, w = bgr_frame.shape[:2]
++        try:
++            import pyvirtualcam
++
++            if self._cam is not None and (self._cam.width, self._cam.height) != (w, h):
++                self.close()
++            if self._cam is None:
++                self._cam = pyvirtualcam.Camera(
++                    width=w,
++                    height=h,
++                    fps=max(1, round(self.fps)),
++                    fmt=pyvirtualcam.PixelFormat.BGR,
++                    device=self.device_name,
++                )
++                update_status(f"Virtual camera: {self._cam.device} {w}x{h}", "DLC.VCAM")
++            self._cam.send(np.ascontiguousarray(bgr_frame))
++        except Exception as exc:  # missing package, no device, device busy
++            self.error = str(exc) or exc.__class__.__name__
++            self.close()
++            update_status(f"Virtual camera unavailable: {self.error}", "DLC.VCAM")
++
++    def close(self) -> None:
++        cam, self._cam = self._cam, None
++        if cam is not None:
++            try:
++                cam.close()
++            except Exception:
++                pass

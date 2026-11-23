@@ -1,0 +1,319 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kevin Turcios <turcioskevinr@gmail.com>
+Date: Thu, 12 Nov 2026 21:00:00 -0500
+Subject: [PATCH] Add HyperSwap swap models
+
+FaceFusion Labs' HyperSwap (1a, 1b, 1c; 256 px) beside InSwapper 128,
+selected with modules.globals.swap_model (default hyperswap_1c_256) or
+--swap-model. HyperSwapper puts the model behind the INSwapper interface
+the pipeline uses; it also predicts an occlusion-aware face mask, returned
+as the crop's alpha channel and used by the paste-back. The models
+download from FaceFusion's asset releases, which model_downloader now
+knows by name; the execution-provider setup is shared by both models.
+
+Reconstructed from Deep-Live-Cam branch headless-library at 047c551,
+which Applio vendored on 2026-11-12; that branch was never pushed, so its
+own history is lost.
+---
+ _vendor/modules/core.py                       |   2 +
+ _vendor/modules/globals.py                    |   1 +
+ _vendor/modules/model_downloader.py           |  13 +-
+ .../modules/processors/frame/face_swapper.py  | 152 +++++++++++++++---
+ 4 files changed, 141 insertions(+), 27 deletions(-)
+
+diff --git a/_vendor/modules/core.py b/_vendor/modules/core.py
+index 917c607..0a0a278 100644
+--- a/_vendor/modules/core.py
++++ b/_vendor/modules/core.py
+@@ -45,6 +45,7 @@ def parse_args() -> None:
+     program.add_argument('-s', '--source', help='select an source image', dest='source_path')
+     program.add_argument('-t', '--target', help='select an target image or video', dest='target_path')
+     program.add_argument('-o', '--output', help='select output file or directory', dest='output_path')
++    program.add_argument('--swap-model', help='face swap model', dest='swap_model', default=modules.globals.swap_model, choices=['inswapper_128', 'hyperswap_1a_256', 'hyperswap_1b_256', 'hyperswap_1c_256'])
+     program.add_argument('--frame-processor', help='pipeline of frame processors', dest='frame_processor', default=['face_swapper'], choices=['face_swapper', 'face_enhancer', 'face_enhancer_gpen256', 'face_enhancer_gpen512'], nargs='+')
+     program.add_argument('--keep-fps', help='keep original fps', dest='keep_fps', action='store_true', default=False)
+     program.add_argument('--keep-audio', help='keep original audio', dest='keep_audio', action='store_true', default=True)
+@@ -76,6 +77,7 @@ def parse_args() -> None:
+     modules.globals.target_path = args.target_path
+     modules.globals.output_path = normalize_output_path(modules.globals.source_path, modules.globals.target_path, args.output_path)
+     modules.globals.frame_processors = args.frame_processor
++    modules.globals.swap_model = args.swap_model
+     modules.globals.headless = args.source_path or args.target_path or args.output_path
+     modules.globals.keep_fps = args.keep_fps
+     modules.globals.keep_audio = args.keep_audio
+diff --git a/_vendor/modules/globals.py b/_vendor/modules/globals.py
+index e36073f..9febcb8 100644
+--- a/_vendor/modules/globals.py
++++ b/_vendor/modules/globals.py
+@@ -58,6 +58,7 @@ fp_ui: Dict[str, bool] = {"face_enhancer": False, "face_enhancer_gpen256": False
+ 
+ # Face Swapper Specific Options
+ face_swapper_enabled: bool = True # General toggle for the swapper processor
++swap_model: str = "hyperswap_1c_256"  # see face_swapper.SWAP_MODELS
+ opacity: float = 1.0              # Blend factor for the swapped face (0.0-1.0)
+ sharpness: float = 0.0            # Sharpness enhancement for swapped face (0.0-1.0+)
+ 
+diff --git a/_vendor/modules/model_downloader.py b/_vendor/modules/model_downloader.py
+index b3c2e94..8a45d81 100644
+--- a/_vendor/modules/model_downloader.py
++++ b/_vendor/modules/model_downloader.py
+@@ -24,6 +24,16 @@ MODEL_SIZES: Dict[str, int] = {
+     "buffalo_l/buffalo_l/det_10g.onnx": 16923827,
+     "buffalo_l/buffalo_l/genderage.onnx": 1322532,
+     "buffalo_l/buffalo_l/w600k_r50.onnx": 174383860,
++    "hyperswap_1a_256.onnx": 402742682,
++    "hyperswap_1b_256.onnx": 402742682,
++    "hyperswap_1c_256.onnx": 402742682,
++}
++
++# Models not hosted in the Deep-Live-Cam Hugging Face repo.
++_FACEFUSION_ASSETS = "https://github.com/facefusion/facefusion-assets/releases/download/models-3.3.0/"
++MODEL_URLS: Dict[str, str] = {
++    f"hyperswap_{v}_256.onnx": f"{_FACEFUSION_ASSETS}hyperswap_{v}_256.onnx"
++    for v in ("1a", "1b", "1c")
+ }
+ 
+ _LOCKS: Dict[str, threading.Lock] = {}
+@@ -50,7 +60,8 @@ def _lock_for(key: str) -> threading.Lock:
+ 
+ 
+ def resolve_url(name: str) -> str:
+-    return HF_RESOLVE_BASE + name.replace(os.sep, "/")
++    name = name.replace(os.sep, "/")
++    return MODEL_URLS.get(name) or HF_RESOLVE_BASE + name
+ 
+ 
+ def local_path(name: str, dest_dir: Optional[str] = None) -> str:
+diff --git a/_vendor/modules/processors/frame/face_swapper.py b/_vendor/modules/processors/frame/face_swapper.py
+index 531cdc2..b949850 100644
+--- a/_vendor/modules/processors/frame/face_swapper.py
++++ b/_vendor/modules/processors/frame/face_swapper.py
+@@ -26,9 +26,16 @@ from collections import deque
+ import time
+ 
+ FACE_SWAPPER = None
++FACE_SWAPPER_MODEL = None  # which entry of SWAP_MODELS FACE_SWAPPER holds
+ THREAD_LOCK = threading.Lock()
+ NAME = "DLC.FACE-SWAPPER"
+ 
++# Selectable swap models (modules.globals.swap_model).
++#   inswapper_128      InsightFace, 128px aligned face.
++#   hyperswap_1x_256   FaceFusion Labs HyperSwap, 256px, also predicts an
++#                      occlusion-aware face mask used for blending.
++SWAP_MODELS = ("inswapper_128", "hyperswap_1a_256", "hyperswap_1b_256", "hyperswap_1c_256")
++
+ # --- START: Added for Interpolation ---
+ PREVIOUS_FRAME_RESULT = None # Stores the final processed frame from the previous step
+ # --- END: Added for Interpolation ---
+@@ -202,7 +209,14 @@ def pre_check() -> bool:
+         logging.error(f"Failed to create directory {download_directory_path} due to permission error: {e}")
+         return False
+ 
+-    from _vendor.modules.model_downloader import ensure_any
++    from _vendor.modules.model_downloader import ensure_any, ensure_model
++
++    selected = _selected_model()
++    if selected != "inswapper_128":
++        if ensure_model(f"{selected}.onnx") is None:
++            update_status(f"Could not obtain {selected}.onnx. Check your internet connection.", NAME)
++            return False
++        return True
+ 
+     variants = ["inswapper_128.onnx", "inswapper_128_fp16.onnx"]
+     if _HAS_TORCH_CUDA:
+@@ -233,10 +247,101 @@ def pre_start() -> bool:
+     return True
+ 
+ 
++def _selected_model() -> str:
++    model = getattr(modules.globals, "swap_model", "hyperswap_1c_256")
++    if model not in SWAP_MODELS:
++        raise ValueError(f"unknown swap model {model!r}; use one of {SWAP_MODELS}")
++    return model
++
++
++def _providers_config() -> list:
++    providers_config = []
++    for p in modules.globals.execution_providers:
++        if p == "CoreMLExecutionProvider" and IS_APPLE_SILICON:
++            # Enhanced CoreML configuration for M1-M5
++            providers_config.append((
++                "CoreMLExecutionProvider",
++                {
++                    "ModelFormat": "MLProgram",
++                    "MLComputeUnits": "ALL",  # Use Neural Engine + GPU + CPU
++                    "SpecializationStrategy": "FastPrediction",
++                    "AllowLowPrecisionAccumulationOnGPU": 1,
++                    "EnableOnSubgraphs": 1,
++                }
++            ))
++        elif p == "CUDAExecutionProvider":
++            # Use bare provider — ONNX Runtime defaults are
++            # fastest on modern GPUs (Blackwell/sm_120).
++            providers_config.append(p)
++        elif p == "OpenVINOExecutionProvider":
++            providers_config.append(OPENVINO_PROVIDER_CONFIG)
++        else:
++            providers_config.append(p)
++    return providers_config
++
++
++class HyperSwapper:
++    """FaceFusion Labs' HyperSwap behind the INSwapper interface used here.
++
++    Inputs: source = ArcFace normed embedding (1x512), target = 256x256
++    aligned crop (arcface_128 template, RGB, scaled to [-1, 1]). Outputs the
++    swapped crop and a face mask that excludes occluders such as glasses.
++    The swapped crop is returned as BGRA with the mask in the alpha channel,
++    which paste_swapped_face() uses for blending.
++    """
++
++    def __init__(self, model_path: str, providers: list):
++        import onnxruntime
++
++        self.model_file = model_path
++        self.session = onnxruntime.InferenceSession(model_path, providers=providers)
++        self.input_size = (256, 256)
++
++    def swap_aligned(self, source_face: Face, aimg: np.ndarray) -> np.ndarray:
++        blob = cv2.dnn.blobFromImage(aimg, 1.0 / 127.5, self.input_size, (127.5, 127.5, 127.5), swapRB=True)
++        embedding = source_face.normed_embedding.reshape((1, -1)).astype(np.float32)
++        out, mask = self.session.run(None, {"source": embedding, "target": blob})
++        rgb = np.clip((out[0].transpose(1, 2, 0) + 1.0) * 127.5, 0, 255).astype(np.uint8)
++        alpha = (np.clip(mask[0, 0], 0.0, 1.0) * 255).astype(np.uint8)
++        return np.ascontiguousarray(np.dstack([rgb[:, :, ::-1], alpha]))
++
++    def get(self, img: Frame, target_face: Face, source_face: Face, paste_back: bool = False):
++        kps = np.asarray(target_face.kps, dtype=np.float32)
++        aimg, M = face_align.norm_crop2(img, kps, self.input_size[0])
++        return self.swap_aligned(source_face, aimg), M
++
++
++def _load_hyperswap(model: str) -> Any:
++    from _vendor.modules.model_downloader import ensure_model
++
++    model_path = ensure_model(f"{model}.onnx")
++    if model_path is None:
++        update_status(f"Could not obtain {model}.onnx.", NAME)
++        return None
++    if IS_APPLE_SILICON:
++        from _vendor.modules.onnx_optimize import optimize_for_coreml
++        model_path = optimize_for_coreml(model_path)
++    update_status(f"Loading face swapper model from: {model_path}", NAME)
++    try:
++        swapper = HyperSwapper(model_path, _providers_config())
++    except Exception as e:
++        update_status(f"Error loading face swapper model: {e}", NAME)
++        return None
++    update_status("Face swapper model loaded successfully.", NAME)
++    return swapper
++
++
+ def get_face_swapper() -> Any:
+-    global FACE_SWAPPER
++    global FACE_SWAPPER, FACE_SWAPPER_MODEL
+ 
++    wanted = _selected_model()
+     with THREAD_LOCK:
++        if FACE_SWAPPER is not None and FACE_SWAPPER_MODEL != wanted:
++            FACE_SWAPPER = None  # model switched: load the new one
++        if FACE_SWAPPER is None and wanted != "inswapper_128":
++            FACE_SWAPPER = _load_hyperswap(wanted)
++            FACE_SWAPPER_MODEL = wanted if FACE_SWAPPER is not None else None
++            return FACE_SWAPPER
+         if FACE_SWAPPER is None:
+             # Prefer FP16 on GPUs with Tensor Cores (Turing+) — half the
+             # memory bandwidth, faster inference.  Fall back to FP32 for
+@@ -264,28 +369,7 @@ def get_face_swapper() -> Any:
+ 
+             update_status(f"Loading face swapper model from: {model_path}", NAME)
+             try:
+-                providers_config = []
+-                for p in modules.globals.execution_providers:
+-                    if p == "CoreMLExecutionProvider" and IS_APPLE_SILICON:
+-                        # Enhanced CoreML configuration for M1-M5
+-                        providers_config.append((
+-                            "CoreMLExecutionProvider",
+-                            {
+-                                "ModelFormat": "MLProgram",
+-                                "MLComputeUnits": "ALL",  # Use Neural Engine + GPU + CPU
+-                                "SpecializationStrategy": "FastPrediction",
+-                                "AllowLowPrecisionAccumulationOnGPU": 1,
+-                                "EnableOnSubgraphs": 1,
+-                            }
+-                        ))
+-                    elif p == "CUDAExecutionProvider":
+-                        # Use bare provider — ONNX Runtime defaults are
+-                        # fastest on modern GPUs (Blackwell/sm_120).
+-                        providers_config.append(p)
+-                    elif p == "OpenVINOExecutionProvider":
+-                        providers_config.append(OPENVINO_PROVIDER_CONFIG)
+-                    else:
+-                        providers_config.append(p)
++                providers_config = _providers_config()
+                 FACE_SWAPPER = insightface.model_zoo.get_model(
+                     model_path,
+                     providers=providers_config,
+@@ -297,6 +381,7 @@ def get_face_swapper() -> Any:
+                     for p in providers_config
+                 ):
+                     _init_cuda_graph_session(model_path, FACE_SWAPPER)
++                FACE_SWAPPER_MODEL = "inswapper_128"
+                 update_status("Face swapper model loaded successfully.", NAME)
+             except Exception as e:
+                 update_status(f"Error loading face swapper model: {e}", NAME)
+@@ -450,7 +535,8 @@ def _cuda_graph_swap_inference(blob: np.ndarray, latent: np.ndarray) -> np.ndarr
+         return cg['io_binding'].get_outputs()[0].numpy()
+ 
+ 
+-def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, M: np.ndarray) -> Frame:
++def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, M: np.ndarray,
++                     face_mask: Optional[np.ndarray] = None) -> Frame:
+     """Paste bgr_fake back onto target_img via the inverse affine of M.
+ 
+     Restricts work to the face bbox in output coordinates and warps a
+@@ -489,6 +575,11 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray,
+     crop_w, crop_h = x2p - x1p, y2p - y1p
+ 
+     soft_alpha = _get_soft_alpha(face_h)
++    if face_mask is not None:
++        # Model-predicted face mask (HyperSwap): keep occluders such as
++        # glasses from the original, feathered, within the elliptical template.
++        soft_mask = cv2.GaussianBlur(face_mask, (0, 0), max(1.0, face_h / 128.0))
++        soft_alpha = cv2.multiply(soft_alpha, soft_mask, scale=1.0 / 255.0)
+     bgr_fake_crop = cv2.warpAffine(bgr_fake, IM_crop, (crop_w, crop_h), borderMode=cv2.BORDER_REPLICATE)
+     alpha_crop = cv2.warpAffine(soft_alpha, IM_crop, (crop_w, crop_h), borderValue=0)
+ 
+@@ -559,6 +650,12 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
+     ``M`` is the alignment of ``target_face`` in ``temp_frame``. The mouth
+     mask, Poisson blend and opacity settings are applied here.
+     """
++    # A 4-channel crop (HyperSwap) carries the model's face mask as alpha.
++    model_mask = None
++    if bgr_fake.ndim == 3 and bgr_fake.shape[2] == 4:
++        model_mask = np.ascontiguousarray(bgr_fake[:, :, 3])
++        bgr_fake = np.ascontiguousarray(bgr_fake[:, :, :3])
++
+     # _fast_paste_back writes in-place on the GPU path.  Only copy when
+     # mouth_mask or opacity < 1 need an unmodified original.
+     opacity = getattr(modules.globals, "opacity", 1.0)
+@@ -587,7 +684,7 @@ def paste_swapped_face(temp_frame: Frame, bgr_fake: np.ndarray, M: np.ndarray, t
+         _face_size = bgr_fake.shape[0]
+         _aimg_dummy = np.empty((_face_size, _face_size, 3), dtype=np.uint8)
+ 
+-        swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M)
++        swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M, model_mask)
+ 
+     except Exception as e:
+         print(f"Error during face swap: {e}")
+@@ -785,7 +882,10 @@ def _swap_aligned_face(face_swapper: Any, source_face: Face, aimg: np.ndarray) -
+ 
+     Mirrors insightface 0.7.3's aligned-face path (blob, emap projection,
+     session.run); keep this in step if the pinned insightface version changes.
++    Models with their own aligned-face entry point (HyperSwapper) use that.
+     """
++    if hasattr(face_swapper, "swap_aligned"):
++        return face_swapper.swap_aligned(source_face, aimg)
+     blob = cv2.dnn.blobFromImage(
+         aimg,
+         1.0 / face_swapper.input_std,

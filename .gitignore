@@ -11,6 +11,8 @@
 *.bin
 *.wav
 *.txt
+# The vendored Deep-Live-Cam pin (scripts/vendor_dlc.py).
+!/tools/vendoring/*.txt
 *.zip
 *.png
 *.safetensors
