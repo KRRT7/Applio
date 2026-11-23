@@ -19,6 +19,13 @@ if not os.path.exists(CONFIG_PATH):
     print("Config file not found. Creating fresh from template.")
     shutil.copy(CONFIG_TEMPLATE_PATH, CONFIG_PATH)
 
+# --open uses Chrome on macOS when it is installed: Live needs camera and
+# microphone access, which works more reliably there than in Safari.
+# An explicit BROWSER environment variable still wins.
+_CHROME_APP = "/Applications/Google Chrome.app"
+if sys.platform == "darwin" and os.path.isdir(_CHROME_APP):
+    os.environ.setdefault("BROWSER", f"open -a '{_CHROME_APP}' %s")
+
 # Plataform config
 from rvc.lib.platform import platform_config
 
