@@ -444,8 +444,9 @@ def _watch_voice():
         if w["silent_since"] is None:
             w["silent_since"] = now
         if not w["warned_silent"] and now - w["silent_since"] >= 5.0:
+            from rvc.realtime.audio_setup import mic_access_hint
             _log(f"Voice WARNING: no sound from the mic for 5 s (level {mic:.0f} dB). Check the Input "
-                 "device and its volume, and that Windows allows microphone access.")
+                 f"device and its volume, and that microphone access is allowed ({mic_access_hint()}).")
             w["warned_silent"] = True
     elif mic > _SOUND_DB:
         if not w["had_sound"] or w["warned_silent"]:
@@ -562,7 +563,8 @@ def audio_panel_html():
     if live:
         mic_extra, out_extra = _meter(st["input_db"]), _meter(st["output_db"])
         if w.get("warned_silent"):
-            mic = (aus.WARN, mic[1] + " · no sound for 5 s: check the mic and its Windows volume")
+            mic = (aus.WARN, mic[1] + " · no sound for 5 s: check the mic, its volume and "
+                   f"microphone access ({aus.mic_access_hint()})")
         if w.get("warned_gated"):
             out = (aus.WARN, out[1] + " · you're speaking but the output is silent: "
                    "lower Silence Threshold or turn off VAD")

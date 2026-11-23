@@ -1,16 +1,19 @@
 """Pick sensible live-voice audio devices and check the routing.
 
-The usual setup on Windows is: your mic -> Applio -> a virtual cable's
-playback side ("CABLE Input"), which other apps (Discord, OBS, Zoom) read
-as a microphone from the cable's recording side ("CABLE Output"). Nothing
-on a virtual cable reaches your speakers, so to hear yourself a monitor
-device (your speakers/headphones) is needed as well.
+The usual setup is: your mic -> Applio -> a virtual cable's playback side,
+which other apps (Discord, OBS, Zoom, WhatsApp Web) read as a microphone
+from the cable's recording side. On Windows that is VB-Audio's "CABLE
+Input" -> "CABLE Output"; on macOS it is BlackHole, one device with both
+sides ("BlackHole 2ch"). Nothing on a virtual cable reaches your speakers,
+so to hear yourself a monitor device (your speakers/headphones) is needed
+as well.
 
 The selection logic here is pure (works on device records) so it can be
 tested without audio hardware; `query()` and `test_cable()` touch PortAudio.
 """
 
 import re
+import sys
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -20,7 +23,33 @@ import numpy as np
 # WDM-KS is left out: it is exclusive and often refuses formats.
 HOST_PREFERENCE = ("WASAPI", "MME", "DirectSound", "Core Audio", "ALSA", "JACK")
 
-_VIRTUAL_WORDS = ("vb-audio", "voicemeeter", "virtual", "blackhole", "loopback", "stereo mix")
+_VIRTUAL_WORDS = (
+    "vb-audio", "voicemeeter", "virtual", "blackhole", "loopback", "stereo mix",
+    # macOS wrappers: "Applio Voice" is an aggregate around BlackHole for call
+    # apps that hide BlackHole itself, so it carries Applio's own output;
+    # Audio MIDI Setup names new ones "Aggregate Device" / "Multi-Output Device".
+    "applio voice", "aggregate device", "multi-output device",
+)
+
+
+def _is_mac(mac=None):
+    return sys.platform == "darwin" if mac is None else mac
+
+
+def cable_name(mac=None):
+    """The virtual cable's playback side to suggest, per platform."""
+    return "BlackHole 2ch" if _is_mac(mac) else "CABLE Input"
+
+
+def mic_access_hint(mac=None):
+    return ("System Settings → Privacy & Security → Microphone" if _is_mac(mac)
+            else "Windows Settings → Privacy → Microphone")
+
+
+def _channels(name):
+    """'BlackHole 16ch' -> 16, 'CABLE In 16ch (...)' -> 16, no count -> 0."""
+    m = re.search(r"(\d+)\s*ch\b", name.lower())
+    return int(m.group(1)) if m else 0
 
 
 @dataclass
@@ -92,7 +121,7 @@ def _same_endpoint(a, b):
     return a.startswith(b) or b.startswith(a)
 
 
-def pick(inputs, outputs, default_input=None, default_output=None):
+def pick(inputs, outputs, default_input=None, default_output=None, mac=None):
     """Choose input, output and monitor devices.
 
     inputs/outputs: Device lists. default_input/default_output: the system
@@ -100,12 +129,17 @@ def pick(inputs, outputs, default_input=None, default_output=None):
     """
     setup = Setup()
 
-    # Output: a virtual cable's playback side. Prefer the plain stereo
-    # 'CABLE Input' over 'CABLE In 16ch'.
+    # Output: a virtual cable's playback side. Prefer the plain stereo one
+    # ('CABLE Input' over 'CABLE In 16ch', 'BlackHole 2ch' over 16ch/64ch).
     cables = _best_host([d for d in outputs if is_cable_playback(d.name)])
-    cables.sort(key=lambda d: ("16ch" in d.name.lower(), d.index))
+    cables.sort(key=lambda d: (_channels(d.name), d.index))
     if cables:
         setup.output = cables[0]
+    elif _is_mac(mac):
+        setup.notes.append(
+            "No virtual cable found. Install BlackHole 2ch (existential.audio/blackhole, "
+            "or: brew install blackhole-2ch), restart Applio, then press Auto-setup again."
+        )
     else:
         setup.notes.append(
             "No virtual cable found. Install VB-Audio Virtual Cable (vb-audio.com/Cable), "
@@ -122,7 +156,7 @@ def pick(inputs, outputs, default_input=None, default_output=None):
     if candidates:
         setup.input = candidates[0]
     else:
-        setup.notes.append("No microphone found. Plug one in and allow microphone access in Windows Privacy settings.")
+        setup.notes.append(f"No microphone found. Plug one in and allow microphone access in {mic_access_hint(mac)}.")
 
     # Monitor device: the system default speakers/headphones. Only filled
     # in; whether to use it is the user's choice.
@@ -168,7 +202,7 @@ def label_for(device, labels):
 OK, WARN, BAD, OFF = "ok", "warn", "bad", "off"
 
 
-def check(input_label, output_label, monitor_label, use_monitor):
+def check(input_label, output_label, monitor_label, use_monitor, mac=None):
     """Per-step verdicts for the routing: dict of step -> (level, text)."""
     in_name, _ = parse_label(input_label)
     out_name, _ = parse_label(output_label)
@@ -186,11 +220,13 @@ def check(input_label, output_label, monitor_label, use_monitor):
     if not output_label:
         steps["out"] = (BAD, "No output selected")
     elif capture:
-        steps["out"] = (OK, f'{out_name} → in Discord/OBS/Zoom pick "{capture}" as the microphone')
+        apps = "WhatsApp Web/Zoom/OBS" if _is_mac(mac) else "Discord/OBS/Zoom"
+        steps["out"] = (OK, f'{out_name} → in {apps} pick "{capture}" as the microphone')
     elif is_virtual(out_name):
         steps["out"] = (WARN, f"{out_name}: this looks like a recording device, not a cable's playback side")
     else:
-        steps["out"] = (WARN, f"{out_name}: other apps can't use this as a mic. Pick CABLE Input to send your voice to calls")
+        steps["out"] = (WARN, f"{out_name}: other apps can't use this as a mic. "
+                              f"Pick {cable_name(mac)} to send your voice to calls")
 
     if use_monitor and monitor_label:
         if mon_name == out_name:
@@ -284,12 +320,23 @@ def test_cable(output_index, seconds=0.6, level=0.1):
     def record(indata, _frames, _time, _status):
         recorded.append(indata.copy())
 
+    def duplex(indata, outdata, frames, time_, status):
+        play(outdata, frames, time_, status)
+        record(indata, frames, time_, status)
+
     try:
-        with sd.InputStream(device=cap.index, channels=in_ch, samplerate=sr, dtype="float32",
-                            callback=record, extra_settings=extra_in):
-            with sd.OutputStream(device=out.index, channels=out_ch, samplerate=sr, dtype="float32",
-                                 callback=play, extra_settings=extra_out):
+        if cap.index == out.index:
+            # BlackHole on macOS: one device with both sides. Core Audio
+            # refuses a second stream on it, so play and record in one.
+            with sd.Stream(device=out.index, channels=(in_ch, out_ch), samplerate=sr,
+                           dtype="float32", callback=duplex):
                 sd.sleep(int(seconds * 1000) + 300)
+        else:
+            with sd.InputStream(device=cap.index, channels=in_ch, samplerate=sr, dtype="float32",
+                                callback=record, extra_settings=extra_in):
+                with sd.OutputStream(device=out.index, channels=out_ch, samplerate=sr, dtype="float32",
+                                     callback=play, extra_settings=extra_out):
+                    sd.sleep(int(seconds * 1000) + 300)
     except Exception as exc:
         return False, f"Could not open the cable: {exc}"
 
@@ -297,6 +344,8 @@ def test_cable(output_index, seconds=0.6, level=0.1):
         return False, "No audio came back from the cable."
     peak = float(np.max(np.abs(np.concatenate(recorded))))
     if peak < level * 0.2:
+        where = ("Audio MIDI Setup (Applications → Utilities)" if _is_mac()
+                 else "Windows Sound settings (Recording tab)")
         return False, (f'Played a tone into {out.name} but "{cap.name}" stayed silent. '
-                       "Check the cable isn't muted in Windows Sound settings (Recording tab).")
+                       f"Check the cable isn't muted in {where}.")
     return True, f'Cable works: a test tone sent to {out.name} came back on "{cap.name}".'
