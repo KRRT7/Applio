@@ -17,8 +17,7 @@ from rvc.lib.user_config import resolve_logs_path
 from rvc.realtime.utils.vad import VADProcessor
 from rvc.realtime.pipeline import create_pipeline, CudaGraphCaptureError
 
-SAMPLE_RATE = 16000
-AUDIO_SAMPLE_RATE = 48000
+from rvc.realtime.constants import SAMPLE_RATE, AUDIO_SAMPLE_RATE  # noqa: F401  (re-exported)
 
 
 # Per-block constants of the phase vocoder, derived from the (immutable) fade

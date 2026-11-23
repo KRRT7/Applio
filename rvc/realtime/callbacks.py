@@ -5,7 +5,7 @@ import numpy as np
 sys.path.append(os.getcwd())
 
 from rvc.realtime.audio import Audio
-from rvc.realtime.core import AUDIO_SAMPLE_RATE
+from rvc.realtime.constants import AUDIO_SAMPLE_RATE
 from rvc.realtime.worker import VoiceChangerWorker
 
 

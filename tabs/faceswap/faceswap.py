@@ -501,7 +501,34 @@ def _status_text():
     return _summary() + ("\n" + "─" * 40 + "\n" + "\n".join(lines) if lines else "")
 
 
+# Gradio writes every preview frame it sends to its cache folder and keeps
+# the files until the server exits (and on Windows %TEMP% is never cleaned),
+# so a running preview adds ~5 JPEGs a second without bound. The newest few
+# are kept so the browser can still fetch the one it was just sent.
+PREVIEW_FILES_KEPT = 10
+_PREVIEW = {"block": None, "files": deque(), "seen": set()}
+
+
+def _prune_preview_files():
+    block = _PREVIEW["block"]
+    if block is None:
+        return
+    files, seen = _PREVIEW["files"], _PREVIEW["seen"]
+    for path in list(block.temp_files - seen):
+        files.append(path)
+        seen.add(path)
+    while len(files) > PREVIEW_FILES_KEPT:
+        path = files.popleft()
+        seen.discard(path)
+        block.temp_files.discard(path)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def poll_preview():
+    _prune_preview_files()
     _watch_voice()
     with _LOCK:
         session = _SESSION
@@ -731,6 +758,7 @@ def live_tab():
                         save_profile_btn = gr.Button(i18n("Save profile"), size="sm")
                         delete_profile_btn = gr.Button(i18n("Delete"), size="sm", variant="stop")
                 preview = gr.Image(label=i18n("Live preview"), interactive=False, format="jpeg", height=420)
+                _PREVIEW["block"] = preview
                 rt = _realtime()  # None in client mode: voice then starts from the Voice tab
                 with gr.Row():
                     face_on = gr.Checkbox(label=i18n("Face swap"), value=saved["face_enabled"])
