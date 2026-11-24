@@ -94,6 +94,25 @@ def test_a_dropped_result_is_smoothed_over():
     assert after_skip[0] == 0 and np.all(after_skip[FADE:] == -0.5)
 
 
+def test_muting_fades_out_keeps_converting_and_resumes_with_a_fade_in():
+    cb = _callbacks()
+    _play(cb, (_block(0.5), 0))
+    cb.muted = True
+    submitted = cb.vc.submitted
+    first, second = _play(cb, (_block(0.5), 0), (_block(0.5), 0))
+    assert (
+        first[0] == pytest.approx(0.5)
+        and np.all(first[FADE:] == 0)
+        and np.all(second == 0)
+    )
+    assert (
+        cb.vc.submitted == submitted + 2 and cb.late_blocks == 0
+    )  # the worker keeps its context
+    cb.muted = False
+    (resumed,) = _play(cb, (_block(0.5), 0))
+    assert resumed[0] == 0 and np.all(resumed[FADE:] == 0.5)
+
+
 def test_a_dead_worker_means_silence_and_a_flag_never_a_loop():
     cb = _callbacks()
     _play(cb, (_block(0.5), 0))

@@ -386,3 +386,18 @@ html { scrollbar-gutter: stable; }
 .applio-audio-foot { color: var(--app-muted); font-size: 12px; line-height: 1.5; border-top: 1px solid var(--app-border); padding-top: 8px; }
 .applio-audio-foot .ok, .applio-audio-foot .bad { font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .applio-audio-meter .fill { transition: none; } }
+/* Live page: on-air indicator (what the call receives) */
+.applio-onair { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; background: var(--app-panel); border: 1px solid var(--app-border); border-left: 4px solid currentColor; border-radius: 10px; font-size: 13px; color: var(--app-text); }
+.applio-onair.off { border-left-color: #71717a; } .applio-onair.ok { border-left-color: #22c55e; } .applio-onair.warn { border-left-color: #f59e0b; } .applio-onair.bad { border-left-color: #ef4444; } .applio-onair.hold { border-left-color: #a78bfa; }
+.applio-onair-head { display: flex; align-items: center; gap: 10px; }
+.applio-onair-title { color: var(--app-muted); font-size: 12px; }
+.applio-onair-pill { padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; letter-spacing: .06em; color: #0a0a0a; background: #71717a; }
+.applio-onair-pill.ok { background: #22c55e; } .applio-onair-pill.warn { background: #f59e0b; } .applio-onair-pill.bad { background: #ef4444; color: #fff; } .applio-onair-pill.hold { background: #a78bfa; }
+.applio-onair-row { display: grid; grid-template-columns: 48px 14px minmax(0, 1fr); align-items: start; gap: 8px; }
+.applio-onair-row .lbl { color: var(--app-muted); }
+.applio-onair-row .txt { overflow-wrap: anywhere; line-height: 1.4; }
+.applio-onair-dot { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; background: currentColor; }
+.applio-onair-dot.ok { color: #22c55e; } .applio-onair-dot.warn { color: #f59e0b; } .applio-onair-dot.bad { color: #ef4444; } .applio-onair-dot.off { color: #71717a; } .applio-onair-dot.hold { color: #a78bfa; }
+.applio-onair-row .txt.bad { color: #ef4444; font-weight: 600; } .applio-onair-row .txt.warn { color: #f59e0b; } .applio-onair-row .txt.hold { color: #a78bfa; font-weight: 600; }
+.applio-onair-foot { color: var(--app-muted); font-size: 12px; line-height: 1.5; border-top: 1px solid var(--app-border); padding-top: 6px; }
+.applio-onair-foot b { color: var(--app-text); }
