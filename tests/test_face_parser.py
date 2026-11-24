@@ -131,8 +131,9 @@ def test_stale_mask_is_reparsed_synchronously():
     parser = _FakeParser()
     worker = fp.FaceMaskWorker(parser)
     worker.mask(_crop(), _m())
-    with patch.object(fp.FaceMaskWorker, "STALE_S", 0.0):
-        time.sleep(0.01)
+    # Any age counts as stale. (0.0 plus a short sleep was flaky on Windows,
+    # whose monotonic clock can advance by 0 between two close calls.)
+    with patch.object(fp.FaceMaskWorker, "STALE_S", -1.0):
         out = worker.mask(_crop(), _m())
     assert out[0, 0] == 2 and parser.threads[1] != "DLC.FACE-PARSER"
 
