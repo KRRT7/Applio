@@ -25,6 +25,7 @@ sys.path.append(now_dir)
 from assets.app_shell import step_card
 from assets.i18n.i18n import I18nAuto
 from rvc.lib import win_rt
+from tabs.faceswap import on_air
 
 i18n = I18nAuto()
 
@@ -74,6 +75,8 @@ DEFAULTS = {
     "mirror": False,
     "async_swap": False,
     "show_fps": False,
+    # Holds the call (frozen video, muted voice) from any program on Windows.
+    "hold_hotkey": on_air.DEFAULT_HOTKEY,
 }
 
 _LOCK = threading.Lock()
@@ -302,6 +305,7 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
         f"virtual camera {'on' if virtual_camera else 'off'} | video delay {float(video_delay or 0):.0f} ms"
     )
     _log(f"Face: settings | {settings}")
+    set_hold(False, "Start")
     if not paths:
         yield _face_fail(i18n("Add at least one source face photo first."))
         return
@@ -328,7 +332,10 @@ def start_live(source, camera, resolution, virtual_camera, video_delay, *quality
         index = int(str(camera).split(":", 1)[0])
         width, height = (int(v) for v in resolution.split("x"))
         vcam = (
-            dlc.DelayedSink(dlc.VirtualCameraSink(), float(video_delay or 0))
+            dlc.DelayedSink(
+                on_air.HoldGate(dlc.VirtualCameraSink(), _is_held),
+                float(video_delay or 0),
+            )
             if virtual_camera
             else None
         )
@@ -442,6 +449,7 @@ def stop_live():
     with _LOCK:
         was_running = _SESSION is not None
     _stop_session()
+    set_hold(False, "Stop")
     _log("Face: stopped" if was_running else "Face: stop pressed (was not running)")
     return _status_text(), gr.Timer(active=_keep_polling()), None
 
@@ -846,6 +854,148 @@ def poll_live():
     return (*poll_preview(), _audio_update())
 
 
+# ─── on-air indicator and hold ───────────────────────────────────────────
+
+# The operator's hold (button or hotkey): the call sees the last frame it was
+# sent and hears silence until it is released. Module state: one local user.
+_HOLD = {
+    "on": False,
+    "since": 0.0,
+    "hotkey": None,
+    "error": None,
+    "last_html": None,
+    "last_button": None,
+}
+_HOTKEY = None
+
+
+def _is_held():
+    return _HOLD["on"]
+
+
+def _apply_voice_hold():
+    """Mute (or unmute) the running voice to match the hold. Idempotent, so
+    each tick re-applies it to a voice started during a hold."""
+    rt = _realtime()
+    callbacks = getattr(rt, "callbacks", None) if rt is not None else None
+    if callbacks is not None:
+        callbacks.muted = _HOLD["on"]
+
+
+def set_hold(on, source):
+    on = bool(on)
+    if _HOLD["on"] != on:
+        now = time.monotonic()
+        _HOLD["on"] = on
+        if on:
+            _HOLD["since"] = now
+            _log(
+                f"HOLD on ({source}): the call sees a frozen picture and hears silence"
+            )
+        else:
+            _log(f"HOLD off ({source}): live again after {now - _HOLD['since']:.0f} s")
+    _apply_voice_hold()
+
+
+def toggle_hold(source="Hold button"):
+    set_hold(not _HOLD["on"], source)
+
+
+def _start_hotkey(spec):
+    """Register the global hold hotkey once per process."""
+    global _HOTKEY
+    if _HOLD["hotkey"] is not None:
+        return
+    try:
+        hotkey = on_air.parse_hotkey(spec)
+    except ValueError as exc:
+        _log(f"Hold hotkey: {exc}; using {on_air.DEFAULT_HOTKEY}")
+        hotkey = on_air.parse_hotkey(on_air.DEFAULT_HOTKEY)
+    _HOLD["hotkey"] = hotkey
+    listener = on_air.GlobalHotkey(hotkey, lambda: toggle_hold(hotkey.label))
+    error = listener.start()
+    if error:
+        _HOLD["error"] = error
+        _log(
+            f"Hold hotkey {hotkey.label}: {error}. It still works while the Live page has focus."
+        )
+    else:
+        _HOTKEY = listener
+        atexit.register(listener.stop)
+
+
+def _on_air_html():
+    with _LOCK:
+        session, vcam = _SESSION, _VCAM
+    face = None
+    if session is not None:
+        vcam_error = getattr(vcam, "error", None) if vcam is not None else None
+        face = {
+            "state": getattr(session, "face_state", "off"),
+            "error": session.error,
+            "sending": vcam is not None and not vcam_error,
+            "vcam_error": vcam_error,
+        }
+    voice = None
+    rt = _realtime()
+    status = rt.voice_status() if rt is not None else None
+    if status is not None:
+        st = rt.voice_stats() if hasattr(rt, "voice_stats") else None
+        voice = {
+            "status": status,
+            "failed": bool(st and st.get("voice_failed")),
+            "ready": bool(st and st.get("blocks")),
+        }
+    hotkey = _HOLD["hotkey"]
+    return on_air.on_air_html(
+        face, voice, _HOLD["on"], hotkey.label if hotkey else None, _HOLD["error"]
+    )
+
+
+def _hold_label():
+    """(label, variant) of the Hold button for the current state."""
+    hotkey = _HOLD["hotkey"]
+    key = f" ({hotkey.label})" if hotkey else ""
+    held = _HOLD["on"]
+    return (
+        i18n("Resume") if held else i18n("Hold")
+    ) + key, "stop" if held else "secondary"
+
+
+def _hold_button():
+    """An update for the Hold button. Event handlers only: called while the
+    page is being built, gr.Button() would add a second button."""
+    label, variant = _hold_label()
+    return gr.Button(value=label, variant=variant)
+
+
+def _on_air_updates(force=False):
+    """(indicator, hold button), skipping whichever has not changed."""
+    page, held = _on_air_html(), _HOLD["on"]
+    out = (
+        page if force or page != _HOLD["last_html"] else gr.skip(),
+        _hold_button() if force or held != _HOLD["last_button"] else gr.skip(),
+    )
+    _HOLD["last_html"], _HOLD["last_button"] = page, held
+    return out
+
+
+def tick_live():
+    """Timer tick with voice: preview, status, audio panel, indicator, hold button."""
+    _apply_voice_hold()
+    return (*poll_live(), *_on_air_updates())
+
+
+def tick_preview():
+    """Timer tick without voice (client mode)."""
+    return (*poll_preview(), *_on_air_updates())
+
+
+def hold_clicked():
+    toggle_hold("Hold button")
+    return (*_on_air_updates(force=True), _status_text())
+
+
 # Gradio writes every preview frame it sends to its cache folder and keeps
 # the files until the server exits (and on Windows %TEMP% is never cleaned),
 # so a running preview adds ~5 JPEGs a second without bound. The newest few
@@ -886,7 +1036,7 @@ def poll_preview():
         _stop_session()
         _log(f"Face ERROR: {session.error}" if session.error else "Face: session ended")
         return gr.skip(), _status_text(), gr.Timer(active=_keep_polling())
-    if frame is None:
+    if frame is None or _HOLD["on"]:
         return gr.skip(), _status_text(), gr.Timer()
     h, w = frame.shape[:2]
     if w > PREVIEW_WIDTH:
@@ -1282,6 +1432,8 @@ def live_tab():
                         delete_profile_btn = gr.Button(
                             i18n("Delete"), size="sm", variant="stop"
                         )
+                _start_hotkey(saved.get("hold_hotkey") or on_air.DEFAULT_HOTKEY)
+                on_air_panel = gr.HTML(_on_air_html())
                 preview = gr.Image(
                     label=i18n("Live preview"),
                     interactive=False,
@@ -1304,6 +1456,9 @@ def live_tab():
                 with gr.Row():
                     start = gr.Button(i18n("Start"), variant="primary")
                     stop = gr.Button(i18n("Stop"))
+                    hold = gr.Button(
+                        _hold_label()[0], variant="secondary", elem_id="applio-hold"
+                    )
                 gr.Markdown(
                     i18n(
                         "Start runs whatever is switched on. Voice uses the settings in the Voice tab."
@@ -1361,7 +1516,14 @@ def live_tab():
 
         refresh.click(lambda: gr.Dropdown(choices=camera_choices()), outputs=camera)
         video_delay.change(set_video_delay, inputs=video_delay, show_progress="hidden")
-        stop.click(stop_live, outputs=[status, timer, preview])
+        stop.click(stop_live, outputs=[status, timer, preview]).then(
+            lambda: _on_air_updates(force=True),
+            outputs=[on_air_panel, hold],
+            show_progress="hidden",
+        )
+        hold.click(
+            hold_clicked, outputs=[on_air_panel, hold, status], show_progress="hidden"
+        )
         if rt is not None:
             controls = rt.SESSION_CONTROLS
             # One click, two listeners: the face side here and the voice side
@@ -1379,6 +1541,10 @@ def live_tab():
             stop.click(stop_voice, outputs=controls["outputs"]).then(
                 lambda: _audio_update(force=True),
                 outputs=audio_panel,
+                show_progress="hidden",
+            ).then(
+                lambda: _on_air_updates(force=True),
+                outputs=[on_air_panel, hold],
                 show_progress="hidden",
             )
             match_voice.click(
@@ -1417,6 +1583,24 @@ def live_tab():
         # photos, look and voice all belong to the same person.
         root = gr.context.Context.root_block
         if root is not None:
+            # The hold shortcut inside the page too: where the global hotkey
+            # is unavailable, or before it registered. (Where it is
+            # registered, Windows delivers the key to it instead.)
+            hotkey = _HOLD["hotkey"] or on_air.parse_hotkey(on_air.DEFAULT_HOTKEY)
+            root.load(
+                None,
+                js="() => { if (window.__applioHoldKey) return; window.__applioHoldKey = true; "
+                "document.addEventListener('keydown', (e) => { if ("
+                + hotkey.js_condition("e")
+                + ") { e.preventDefault(); "
+                "const b = document.getElementById('applio-hold'); if (b) b.click(); } }); }",
+            )
+            # A page opened (or reloaded) mid-session shows the current state.
+            root.load(
+                lambda: _on_air_updates(force=True),
+                outputs=[on_air_panel, hold],
+                show_progress="hidden",
+            )
             root.load(
                 load_profile,
                 inputs=profile,
@@ -1465,13 +1649,15 @@ def live_tab():
                 test_audio_cable, inputs=dev["output"], outputs=[audio_panel, status]
             )
             timer.tick(
-                poll_live,
-                outputs=[preview, status, timer, audio_panel],
+                tick_live,
+                outputs=[preview, status, timer, audio_panel, on_air_panel, hold],
                 show_progress="hidden",
             )
         else:
             timer.tick(
-                poll_preview, outputs=[preview, status, timer], show_progress="hidden"
+                tick_preview,
+                outputs=[preview, status, timer, on_air_panel, hold],
+                show_progress="hidden",
             )
         for control in [source, *quality]:
             control.change(

@@ -63,6 +63,9 @@ class AudioCallbacks:
         self._in_gap = False
         self.late_blocks = 0  # blocks the worker did not deliver in time
         self.voice_failed = False  # the worker process died; output is silence
+        # The operator's hold: output silence, but keep converting so the
+        # voice resumes with its context instead of a cold start.
+        self.muted = False
 
         vc_kwargs = dict(
             block_frame=block_frame,
@@ -143,6 +146,8 @@ class AudioCallbacks:
         self.vc.submit(received_data, params)
 
         result = self.vc.retrieve()
+        if getattr(self, "muted", False):
+            return self._gap(n), 0, 0  # fades out once; resuming fades back in
         if result is not None:
             audio, vol, perf_ms, _warmup = result
             skipped = getattr(self.vc, "last_skipped", 0)
